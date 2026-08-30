@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    { "id": "person-zhang", "label": "张敏", "type": "person", "district": "东区", "role": "网格员" },
+    { "id": "person-li", "label": "李宁", "type": "person", "district": "东区", "role": "志愿者" },
+    { "id": "person-wang", "label": "王涛", "type": "person", "district": "西区", "role": "协调员" },
+    { "id": "org-east", "label": "东区社区中心", "type": "organization", "district": "东区" },
+    { "id": "org-west", "label": "西区社会组织联合会", "type": "organization", "district": "西区" },
+    { "id": "project-care", "label": "独居老人关怀项目", "type": "project", "topic": "社区照护" },
+    { "id": "project-emergency", "label": "跨区应急联动", "type": "project", "topic": "应急治理" }
+  ],
+  "edges": [
+    { "id": "e1", "source": "person-zhang", "target": "org-east", "type": "隶属", "weight": 1 },
+    { "id": "e2", "source": "person-li", "target": "org-east", "type": "志愿服务", "weight": 3 },
+    { "id": "e3", "source": "person-wang", "target": "org-west", "type": "隶属", "weight": 1 },
+    { "id": "e4", "source": "org-east", "target": "project-care", "type": "发起", "weight": 4 },
+    { "id": "e5", "source": "person-li", "target": "project-care", "type": "参与", "weight": 5 },
+    { "id": "e6", "source": "org-east", "target": "project-emergency", "type": "参与", "weight": 3 },
+    { "id": "e7", "source": "org-west", "target": "project-emergency", "type": "参与", "weight": 3 },
+    { "id": "e8", "source": "person-wang", "target": "person-zhang", "type": "跨区协作", "weight": 2 },
+    { "id": "e9", "source": "person-wang", "target": "project-emergency", "type": "协调", "weight": 4 }
+  ]
+}

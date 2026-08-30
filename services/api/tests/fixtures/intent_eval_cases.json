@@ -1,0 +1,60 @@
+[
+  {"text": "给我一份当前图谱概览", "expected": "overview"},
+  {"text": "总结一下关系图的基本情况", "expected": "overview"},
+  {"text": "统计整个网络结构", "expected": "overview"},
+  {"text": "看看图谱情况", "expected": "overview"},
+  {"text": "生成网络整体摘要", "expected": "overview"},
+  {"text": "关系数据的基本情况如何", "expected": "overview"},
+
+  {"text": "计算所有节点的中心性", "expected": "centrality"},
+  {"text": "谁是网络里最有影响力的人", "expected": "centrality"},
+  {"text": "找出核心节点", "expected": "centrality"},
+  {"text": "识别关键成员", "expected": "centrality"},
+  {"text": "给出重要节点排名", "expected": "centrality"},
+  {"text": "生成成员排名和度数排名", "expected": "centrality"},
+
+  {"text": "查找这个网络的割点", "expected": "bridge_detection"},
+  {"text": "哪些是桥接节点", "expected": "bridge_detection"},
+  {"text": "识别关键桥梁", "expected": "bridge_detection"},
+  {"text": "找出可能的桥接者", "expected": "bridge_detection"},
+  {"text": "分析网络中的结构洞", "expected": "bridge_detection"},
+  {"text": "高校协作网络是否存在协作断层", "expected": "bridge_detection"},
+
+  {"text": "进行社区发现", "expected": "community"},
+  {"text": "这个社群如何划分", "expected": "community"},
+  {"text": "分析网络群落", "expected": "community"},
+  {"text": "识别成员所在圈层", "expected": "community"},
+  {"text": "把关系图分区", "expected": "community"},
+  {"text": "评估社区健康", "expected": "community"},
+
+  {"text": "执行链接预测", "expected": "link_prediction"},
+  {"text": "预测未来可能出现的关系", "expected": "link_prediction"},
+  {"text": "找出潜在关系", "expected": "link_prediction"},
+  {"text": "哪些成员可能开展潜在合作", "expected": "link_prediction"},
+  {"text": "给我关系推荐", "expected": "link_prediction"},
+  {"text": "发现可能的合作机会", "expected": "link_prediction"},
+
+  {"text": "识别每个节点角色", "expected": "node_role"},
+  {"text": "进行成员角色分析", "expected": "node_role"},
+  {"text": "判断成员定位", "expected": "node_role"},
+  {"text": "完成节点分类", "expected": "node_role"},
+  {"text": "识别网络里的核心团队角色", "expected": "node_role"},
+  {"text": "请做角色识别", "expected": "node_role"},
+
+  {"text": "查找相似结构", "expected": "similar_structure"},
+  {"text": "推荐几个相似案例", "expected": "similar_structure"},
+  {"text": "执行图结构检索", "expected": "similar_structure"},
+  {"text": "有没有与当前网络相似的图", "expected": "similar_structure"},
+  {"text": "检索类比网络", "expected": "similar_structure"},
+  {"text": "寻找与它结构接近的相似图", "expected": "similar_structure"},
+
+  {"text": "你好", "expected": "chat"},
+  {"text": "您好，很高兴见到你", "expected": "chat"},
+  {"text": "嗨", "expected": "chat"},
+  {"text": "谢谢你的介绍", "expected": "chat"},
+  {"text": "你是谁", "expected": "chat"},
+  {"text": "你能做什么？", "expected": "chat"},
+  {"text": "这个系统怎么使用", "expected": "chat"},
+  {"text": "我需要一些帮助", "expected": "chat"}
+]
+

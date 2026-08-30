@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "gfm.pretrain-config/1.0",
+  "configId": "socialgraph-core",
+  "architecture": {
+    "candidates": ["core-base", "core-moe"],
+    "hiddenChannels": 128,
+    "numLayers": 2,
+    "dropout": 0.2,
+    "relationBases": 8,
+    "timeChannels": 32,
+    "neighborFanout": [15, 10],
+    "domainAdapterBottleneck": 32,
+    "moeExperts": 2,
+    "includeNullExpert": true
+  },
+  "domains": [
+    {
+      "domainId": "openalex-graph-ai",
+      "domainFamily": "academic-collaboration",
+      "required": true,
+      "textEnabled": true
+    },
+    {
+      "domainId": "thgl-software-2.0.0",
+      "domainFamily": "software-activity",
+      "required": true,
+      "textEnabled": false
+    },
+    {
+      "domainId": "wikimedia-talk-article-2011-2015",
+      "domainFamily": "online-community",
+      "required": true,
+      "textEnabled": true
+    }
+  ],
+  "textEncoder": {
+    "modelId": "BAAI/bge-m3",
+    "revision": "5617a9f61b028005a4858fdac845db406aefb181",
+    "license": "MIT",
+    "frozen": true,
+    "outputChannels": 1024,
+    "maxTokens": 512,
+    "trainingTimeEncodingForbidden": true
+  },
+  "lossWeights": {
+    "temporalNextEvent": 1.0,
+    "maskedAttribute": 0.5,
+    "maskedRelationType": 0.25,
+    "logTimeDelta": 0.25,
+    "textStructureAlignment": 0.25,
+    "crossDomainDistributionAlignment": 0.05,
+    "moeRouteBalance": 0.01
+  },
+  "negativeSampling": {
+    "hardRatio": 0.5,
+    "degreeMatchedRatio": 0.25,
+    "uniformRatio": 0.25,
+    "exact": true,
+    "futureAccessForbidden": true
+  },
+  "optimization": {
+    "optimizer": "adamw",
+    "learningRate": 0.001,
+    "weightDecay": 0.0001,
+    "warmupRatio": 0.05,
+    "schedule": "cosine",
+    "gradientClip": 1.0,
+    "precision": "fp16",
+    "candidateBatchSizes": [2048, 1024, 512],
+    "effectiveBatchSize": 4096,
+    "cudaMemoryLimitMiB": 7168,
+    "numWorkers": 0
+  },
+  "dev": {
+    "seeds": [20260820],
+    "maxSteps": 2000,
+    "minimumSteps": 0,
+    "evaluationEverySteps": 500,
+    "patienceEvaluations": 4,
+    "readTest": false
+  },
+  "formal": {
+    "seeds": [20260821, 20260822, 20260823],
+    "maxSteps": 30000,
+    "minimumSteps": 10000,
+    "evaluationEverySteps": 1000,
+    "patienceEvaluations": 6,
+    "readTestAfterBestOnly": true
+  },
+  "checkpoint": {
+    "maximumPerRun": 3,
+    "freshProcessVerificationRequired": true,
+    "registrableBeforeAcceptance": false
+  },
+  "promotion": {
+    "moeMinimumMeanRelativeGain": 0.02,
+    "moeMaximumPerDomainRelativeRegression": 0.01
+  },
+  "product": {
+    "collaborationRerankWeights": {
+      "calibratedProbability": 0.7,
+      "topicComplementarity": 0.15,
+      "bridgeGain": 0.1,
+      "institutionDiversity": 0.05
+    },
+    "collaborationHorizonDays": 365,
+    "newcomerObservationDays": 90,
+    "newcomerHorizonDays": 365
+  },
+  "transfer": {
+    "lodoTargetAdaptationSteps": 5000
+  },
+  "acceptance": {
+    "fewShotFractions": [0.01, 0.05, 0.1],
+    "minimumRandomInitRelativeGainAt5Percent": 0.05,
+    "minimumSingleDomainRelativeGainAt5Percent": 0.03,
+    "maximumDomainRelativeRegression": 0.02,
+    "minimumImprovedDomainFamilies": 2,
+    "minimumProductRelativeGain": 0.05,
+    "minimumNewcomerAuprcAbovePrevalence": 0.05,
+    "maximumEce": 0.05,
+    "bootstrapConfidence": 0.95,
+    "cudaMemoryLimitMiB": 7168
+  }
+}

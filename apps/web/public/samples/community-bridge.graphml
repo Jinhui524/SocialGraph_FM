@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="node-label" for="node" attr.name="label" attr.type="string" />
+  <key id="node-type" for="node" attr.name="type" attr.type="string" />
+  <key id="edge-type" for="edge" attr.name="relation" attr.type="string" />
+  <key id="edge-weight" for="edge" attr.name="weight" attr.type="double" />
+  <graph id="governance" edgedefault="undirected">
+    <node id="east"><data key="node-label">东区工作站</data><data key="node-type">organization</data></node>
+    <node id="east-member"><data key="node-label">东区联络员</data><data key="node-type">person</data></node>
+    <node id="bridge"><data key="node-label">跨区协调员</data><data key="node-type">person</data></node>
+    <node id="west-member"><data key="node-label">西区联络员</data><data key="node-type">person</data></node>
+    <node id="west"><data key="node-label">西区工作站</data><data key="node-type">organization</data></node>
+    <edge id="e1" source="east" target="east-member"><data key="edge-type">协作</data><data key="edge-weight">3</data></edge>
+    <edge id="e2" source="east-member" target="bridge"><data key="edge-type">协调</data><data key="edge-weight">5</data></edge>
+    <edge id="e3" source="bridge" target="west-member"><data key="edge-type">协调</data><data key="edge-weight">5</data></edge>
+    <edge id="e4" source="west-member" target="west"><data key="edge-type">协作</data><data key="edge-weight">3</data></edge>
+  </graph>
+</graphml>

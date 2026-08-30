@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contractSchema": "schemas/public/catalog-source.schema.json",
+  "namespace": "socialgraph-fm.product-skills.governance",
+  "schemaVersion": "socialgraph-fm.governance-skills/1.0",
+  "implementationVersion": "socialgraph-fm-gfm/governance-skills/1.0",
+  "items": [
+    {
+      "name": "inspect_graph",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "description": "Return bounded graph counts and modality coverage.",
+      "parameterSchema": "schemas/public/parameters/inspect_graph.schema.json",
+      "internalCommand": "inspect_graph"
+    },
+    {
+      "name": "run_governance_analysis",
+      "readOnly": false,
+      "confirmationRequired": true,
+      "confirmationAction": "run_governance_analysis",
+      "description": "Prepare a SocialGraph-FM Governance run for explicit confirmation.",
+      "parameterSchema": "schemas/public/parameters/run_governance_analysis.schema.json",
+      "internalCommand": "run_governance_analysis"
+    },
+    {
+      "name": "get_evidence_subgraph",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "description": "Trace a bounded, hash-bound evidence subgraph for one node.",
+      "parameterSchema": "schemas/public/parameters/get_evidence_subgraph.schema.json",
+      "internalCommand": "get_evidence_subgraph"
+    },
+    {
+      "name": "discover_coordination_groups",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "description": "Page through deterministic coordination-group summaries.",
+      "parameterSchema": "schemas/public/parameters/discover_coordination_groups.schema.json",
+      "internalCommand": "discover_coordination_groups"
+    },
+    {
+      "name": "rank_coordination_relations",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "description": "Page through bounded coordination-relation rankings.",
+      "parameterSchema": "schemas/public/parameters/rank_coordination_relations.schema.json",
+      "internalCommand": "rank_coordination_relations"
+    },
+    {
+      "name": "retrieve_similar_cases",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "description": "Retrieve successfully indexed reviewed cases from the GFM index.",
+      "parameterSchema": "schemas/public/parameters/retrieve_similar_cases.schema.json",
+      "internalCommand": "retrieve_similar_cases"
+    },
+    {
+      "name": "get_model_dataset_cards",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "description": "Return hash-bound model, dataset, and input-contract cards.",
+      "parameterSchema": "schemas/public/parameters/get_model_dataset_cards.schema.json",
+      "internalCommand": "get_model_dataset_cards"
+    },
+    {
+      "name": "draft_review_report",
+      "readOnly": false,
+      "confirmationRequired": true,
+      "confirmationAction": "save_draft_report",
+      "description": "Create a deterministic case review draft for explicit save confirmation.",
+      "parameterSchema": "schemas/public/parameters/draft_review_report.schema.json",
+      "internalCommand": "draft_review_report"
+    }
+  ]
+}

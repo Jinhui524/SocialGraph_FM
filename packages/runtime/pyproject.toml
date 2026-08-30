@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "socialgraph-fm-runtime"
+version = "0.1.0"
+description = "Cross-platform local runtime manager for SocialGraph-FM"
+readme = { text = "Cross-platform setup and lifecycle manager for SocialGraph-FM.", content-type = "text/markdown" }
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+authors = [{ name = "SocialGraph-FM" }]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+socialgraph-fm = "socialgraph_fm_runtime.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/socialgraph_fm_runtime"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B"]

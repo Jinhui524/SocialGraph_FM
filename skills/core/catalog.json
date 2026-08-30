@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "namespace": "socialgraph-fm.product-skills.core",
+  "contractVersion": "2.0",
+  "implementation": "packages/gfm/src/socialgraph_gfm/core/skills.py",
+  "items": [
+    {
+      "name": "generate_report",
+      "requestSchemaVersion": "socialgraph-fm.core-skill.generate-report.request/2.0",
+      "responseSchemaVersion": "socialgraph-fm.core-skill.generate-report.response/2.0"
+    },
+    {
+      "name": "inspect_graph",
+      "requestSchemaVersion": "socialgraph-fm.core-skill.inspect-graph.request/2.0",
+      "responseSchemaVersion": "socialgraph-fm.core-skill.inspect-graph.response/2.0"
+    },
+    {
+      "name": "retrieve_evidence",
+      "requestSchemaVersion": "socialgraph-fm.core-skill.retrieve-evidence.request/2.0",
+      "responseSchemaVersion": "socialgraph-fm.core-skill.retrieve-evidence.response/2.0"
+    },
+    {
+      "name": "run_core_task",
+      "requestSchemaVersion": "socialgraph-fm.core-skill.run-core-task.request/2.0",
+      "responseSchemaVersion": "socialgraph-fm.core-skill.run-core-task.response/2.0"
+    }
+  ]
+}

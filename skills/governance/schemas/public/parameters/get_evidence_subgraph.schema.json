@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/public/parameters/get_evidence_subgraph.schema.json",
+  "title": "get_evidence_subgraph parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runId", "nodeId"],
+  "properties": {
+    "runId": { "type": "string", "pattern": "^governance-[0-9a-f]{32}$" },
+    "nodeId": { "type": "string", "minLength": 1, "maxLength": 128 }
+  }
+}

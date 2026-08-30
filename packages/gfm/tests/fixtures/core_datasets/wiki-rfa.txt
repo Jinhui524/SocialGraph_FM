@@ -1,0 +1,55 @@
+SRC:A
+TGT:B
+VOT:1
+RES:1
+YEA:2012
+DAT:01:00, 1 January 2012
+TXT:first support comment
+
+SRC:A
+TGT:B
+VOT:1
+RES:1
+YEA:2013
+DAT:02:00, 2 January 2013
+TXT:second support comment
+
+SRC:A
+TGT:B
+VOT:-1
+RES:-1
+YEA:2013
+DAT:03:00, 3 January 2013
+TXT:minority oppose comment
+
+SRC:B
+TGT:A
+VOT:-1
+RES:-1
+YEA:2013
+DAT:04:00, 4 January 2013
+TXT:reciprocal oppose comment
+
+SRC:A
+TGT:C
+VOT:1
+RES:1
+YEA:2013
+DAT:05:00, 5 January 2013
+TXT:tied positive comment
+
+SRC:A
+TGT:C
+VOT:-1
+RES:-1
+YEA:2013
+DAT:06:00, 6 January 2013
+TXT:tied negative comment
+
+SRC:C
+TGT:B
+VOT:0
+RES:1
+YEA:2013
+DAT:07:00, 7 January 2013
+TXT:neutral comment

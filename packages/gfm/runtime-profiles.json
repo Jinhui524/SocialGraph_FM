@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "gfm.runtime-profiles/1.0",
+  "profiles": {
+    "windows-cpu": {
+      "python": "3.12",
+      "torch": "2.8.0+cpu",
+      "cuda": null,
+      "torch_geometric": "2.8.0.post1",
+      "ogb": "1.3.6",
+      "pyg_lib": "0.6.0+pt28cpu",
+      "constraints": "constraints/windows-cpu.txt"
+    },
+    "windows-cu130": {
+      "python": "3.12",
+      "torch": "2.12.0+cu130",
+      "cuda": "13.0",
+      "torch_geometric": "2.8.0.post1",
+      "ogb": "1.3.6",
+      "pyg_lib": "0.7.0+pt212cu130",
+      "constraints": "constraints/windows-cu130.txt"
+    },
+    "linux-cu130": {
+      "python": "3.12",
+      "torch": "2.12.0+cu130",
+      "cuda": "13.0",
+      "torch_geometric": "2.8.0.post1",
+      "ogb": "1.3.6",
+      "pyg_lib": "0.7.0+pt212cu130",
+      "torch_scatter": "2.1.2+pt212cu130",
+      "torch_sparse": "0.6.18+pt212cu130",
+      "constraints": "constraints/linux-cu130.txt"
+    },
+    "cpu-ci": {
+      "python": "3.12",
+      "torch": "2.8.0+cpu",
+      "cuda": null,
+      "torch_geometric": "2.8.0.post1",
+      "ogb": "1.3.6",
+      "pyg_lib": "0.6.0+pt28cpu",
+      "constraints": "constraints/cpu-ci.txt"
+    }
+  }
+}

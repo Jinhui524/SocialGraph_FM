@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "socialgraph-fm.publication-allowlist/1.0",
+  "archives": {
+    "apps/web/public/samples/geom-gcn-toy.zip": {
+      "sha256": "8812e41a349a34e25ae5c4258fc4f5c0bfa86136a9bd9d70971d9d630e7010c1",
+      "synthetic": true,
+      "members": [
+        "dataset_split_0.npz",
+        "out1_graph_edges.txt",
+        "out1_node_feature_label.txt"
+      ]
+    }
+  },
+  "binaryMetadata": {
+    "apps/web/public/assets/brand-mark.png": {
+      "allowC2pa": true,
+      "reason": "Retained image-generation Content Credentials; see THIRD_PARTY_NOTICES.md"
+    }
+  }
+}

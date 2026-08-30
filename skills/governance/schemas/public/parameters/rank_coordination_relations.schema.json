@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/public/parameters/rank_coordination_relations.schema.json",
+  "title": "rank_coordination_relations parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runId"],
+  "properties": {
+    "runId": { "type": "string", "pattern": "^governance-[0-9a-f]{32}$" },
+    "offset": { "type": "integer", "minimum": 0, "default": 0 },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 },
+    "relationKind": { "enum": ["factual", "potential"], "default": "factual" },
+    "modalities": {
+      "type": "array",
+      "items": { "enum": ["coRT", "coURL", "hashSeq", "fastRT", "tweetSim"] },
+      "maxItems": 5,
+      "uniqueItems": true,
+      "default": []
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "relationKind": { "const": "potential" } }, "required": ["relationKind"] },
+      "then": { "properties": { "modalities": { "maxItems": 0 } } }
+    }
+  ]
+}

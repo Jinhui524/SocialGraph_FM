@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/public/parameters/retrieve_similar_cases.schema.json",
+  "title": "retrieve_similar_cases parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "caseId": { "type": "string", "pattern": "^case-[0-9a-f]{32}$" },
+    "runId": { "type": "string", "pattern": "^governance-[0-9a-f]{32}$" },
+    "kindEntries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/kindEntry" },
+      "x-canonical-order": ["node", "relation", "group"]
+    },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 25, "default": 10 }
+  },
+  "oneOf": [
+    { "required": ["caseId"], "not": { "anyOf": [{ "required": ["runId"] }, { "required": ["kindEntries"] }] } },
+    { "required": ["runId", "kindEntries"], "not": { "required": ["caseId"] } }
+  ],
+  "$defs": {
+    "kindEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "targetIds"],
+      "properties": {
+        "kind": { "enum": ["node", "relation", "group"] },
+        "targetIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "type": "string" },
+          "x-canonical-order": "lexicographic"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "socialgraph-fm.core-tasks/1.0",
+  "family": "collaboration_governance",
+  "tasks": [
+    {
+      "taskId": "core.community_resilience_review",
+      "displayName": "Community resilience review",
+      "enabled": false,
+      "humanReviewRequired": true,
+      "description": "A disabled static-graph review contract for evidence-backed community resilience assessment."
+    },
+    {
+      "taskId": "core.risk_and_trust_review",
+      "displayName": "Risk and trust review",
+      "enabled": false,
+      "humanReviewRequired": true,
+      "description": "A disabled static-graph review contract for evidence-backed risk and trust assessment."
+    },
+    {
+      "taskId": "core.collaboration_completion",
+      "displayName": "Collaboration completion",
+      "enabled": false,
+      "humanReviewRequired": true,
+      "description": "A disabled static-graph contract for collaboration-completion review."
+    }
+  ],
+  "legacyCompatibilitySmokeTaskIds": [
+    "core.community_health_observation",
+    "core.newcomer_support",
+    "core.coordination_review"
+  ],
+  "modelOrServingReadinessImplied": false,
+  "contentHash": "76d5763dbe085e4edfdad89236b09310115bf712028c308dbfa60546505e95c8"
+}

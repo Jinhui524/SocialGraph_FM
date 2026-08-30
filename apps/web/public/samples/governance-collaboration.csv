@@ -1,0 +1,16 @@
+source,target,edge_type,weight,timestamp,source_type,target_type
+东区志愿站,东区网格员甲,协作,5,2025-01-08,organization,person
+东区志愿站,东区网格员乙,协作,4,2025-01-15,organization,person
+东区网格员甲,东区网格员乙,信息共享,3,2025-02-02,person,person
+东区网格员甲,东区居民代表,服务联络,2,2025-02-18,person,person
+东区网格员乙,东区居民代表,服务联络,3,2025-03-05,person,person
+西区志愿站,西区网格员甲,协作,5,2025-01-10,organization,person
+西区志愿站,西区网格员乙,协作,4,2025-01-17,organization,person
+西区网格员甲,西区网格员乙,信息共享,3,2025-02-06,person,person
+西区网格员甲,西区居民代表,服务联络,2,2025-02-21,person,person
+西区网格员乙,西区居民代表,服务联络,3,2025-03-09,person,person
+东区网格员乙,跨区协调员,跨区协调,5,2025-03-18,person,person
+跨区协调员,西区网格员甲,跨区协调,5,2025-03-19,person,person
+跨区协调员,应急联动项目,参与,4,2025-04-01,person,project
+东区志愿站,东区居民代表,组织支持,3,2025-04-03,organization,person
+西区志愿站,西区居民代表,组织支持,3,2025-04-04,organization,person

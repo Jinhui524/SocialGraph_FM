@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/internal/governance-command.schema.json",
+  "title": "SocialGraph-FM Governance isolated GFM command envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commandId", "command", "graph", "model", "params"],
+  "properties": {
+    "schemaVersion": { "const": "socialgraph-fm.governance-command/1.0" },
+    "commandId": { "type": "string", "pattern": "^governance-command-[0-9a-f]{32}$" },
+    "command": {
+      "enum": [
+        "inspect_graph",
+        "run_governance_analysis",
+        "get_evidence_subgraph",
+        "discover_coordination_groups",
+        "rank_coordination_relations",
+        "retrieve_similar_cases",
+        "get_model_dataset_cards",
+        "draft_review_report",
+        "index_case",
+        "search_knowledge"
+      ]
+    },
+    "graph": { "$ref": "../public/skill-request.schema.json#/$defs/graph" },
+    "model": { "$ref": "../public/skill-request.schema.json#/$defs/model" },
+    "params": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "command": { "const": "inspect_graph" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/inspect" } } } },
+    { "if": { "properties": { "command": { "const": "run_governance_analysis" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/run" } } } },
+    { "if": { "properties": { "command": { "const": "get_evidence_subgraph" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/evidence" } } } },
+    { "if": { "properties": { "command": { "const": "discover_coordination_groups" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/page" } } } },
+    { "if": { "properties": { "command": { "const": "rank_coordination_relations" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/relation" } } } },
+    { "if": { "properties": { "command": { "const": "retrieve_similar_cases" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/similar" } } } },
+    { "if": { "properties": { "command": { "const": "get_model_dataset_cards" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/empty" } } } },
+    { "if": { "properties": { "command": { "const": "draft_review_report" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/draft" } } } },
+    { "if": { "properties": { "command": { "const": "index_case" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/indexCase" } } } },
+    { "if": { "properties": { "command": { "const": "search_knowledge" } }, "required": ["command"] }, "then": { "properties": { "params": { "$ref": "#/$defs/knowledge" } } } }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runId": { "type": "string", "pattern": "^governance-[0-9a-f]{32}$" },
+    "caseId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,200}$" },
+    "kindEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "targetIds"],
+      "properties": {
+        "kind": { "enum": ["node", "relation", "group"] },
+        "targetIds": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "string" } }
+      }
+    },
+    "inspect": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scopeNodeIds": { "type": "array", "maxItems": 10000, "uniqueItems": true, "items": { "type": "string" }, "default": [], "x-canonical-order": "lexicographic" },
+        "runId": { "anyOf": [{ "$ref": "#/$defs/runId" }, { "type": "null" }], "default": null },
+        "candidateLimit": { "type": "integer", "minimum": 1, "maximum": 5, "default": 5 }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "topK"],
+      "properties": {
+        "protocol": { "const": "global" },
+        "topK": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "nodeId"],
+      "properties": {
+        "runId": { "$ref": "#/$defs/runId" },
+        "nodeId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId"],
+      "properties": {
+        "runId": { "$ref": "#/$defs/runId" },
+        "offset": { "type": "integer", "minimum": 0, "default": 0 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId"],
+      "properties": {
+        "runId": { "$ref": "#/$defs/runId" },
+        "offset": { "type": "integer", "minimum": 0, "default": 0 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
+        "relationKind": { "enum": ["factual", "potential"], "default": "factual" },
+        "modalities": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "enum": ["coRT", "coURL", "hashSeq", "fastRT", "tweetSim"] }, "default": [] }
+      },
+      "allOf": [
+        { "if": { "properties": { "relationKind": { "const": "potential" } }, "required": ["relationKind"] }, "then": { "properties": { "modalities": { "maxItems": 0 } } } }
+      ]
+    },
+    "similar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseId": { "$ref": "#/$defs/caseId" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "kindEntries": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/kindEntry" }, "x-canonical-order": ["node", "relation", "group"] },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 }
+      },
+      "oneOf": [
+        { "required": ["caseId"], "not": { "anyOf": [{ "required": ["runId"] }, { "required": ["kindEntries"] }] } },
+        { "required": ["runId", "kindEntries"], "not": { "required": ["caseId"] } }
+      ]
+    },
+    "empty": { "type": "object", "additionalProperties": false },
+    "draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caseId", "caseHash", "runId", "resultHash", "kindEntries", "format"],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/caseId" },
+        "caseHash": { "$ref": "#/$defs/hash" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "resultHash": { "$ref": "#/$defs/hash" },
+        "kindEntries": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/kindEntry" }, "x-canonical-order": ["node", "relation", "group"] },
+        "format": { "enum": ["markdown", "json"] },
+        "reviewHash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }], "default": null }
+      }
+    },
+    "indexCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caseId", "caseHash", "runId", "resultHash", "kindEntries", "concludedAt", "reviewHash", "reviewStatus"],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/caseId" },
+        "caseHash": { "$ref": "#/$defs/hash" },
+        "runId": { "$ref": "#/$defs/runId" },
+        "resultHash": { "$ref": "#/$defs/hash" },
+        "kindEntries": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/kindEntry" }, "x-canonical-order": ["node", "relation", "group"] },
+        "concludedAt": { "type": "string", "format": "date-time" },
+        "reviewHash": { "$ref": "#/$defs/hash" },
+        "reviewStatus": { "enum": ["concluded", "reviewed"] }
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query"],
+      "properties": {
+        "query": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+      }
+    }
+  }
+}

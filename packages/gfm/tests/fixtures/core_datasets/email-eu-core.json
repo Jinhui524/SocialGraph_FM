@@ -1,0 +1,1 @@
+{"recipeId":"email-eu-core","nodes":[{"id":"0","department":"7"},{"id":"1","department":"7"},{"id":"2","department":"9"},{"id":"3","department":"9"}],"edges":[["0","1"],["1","2"],["2","3"],["3","0"],["0","2"]]}

@@ -1,0 +1,11 @@
+{
+  "nodes": [
+    { "id": "a", "label": "核心成员", "type": "member" },
+    { "id": "b", "label": "桥接成员", "type": "member" },
+    { "id": "c", "label": "合作机构", "type": "organization" }
+  ],
+  "edges": [
+    { "id": "e1", "source": "a", "target": "b", "type": "合作" },
+    { "id": "e2", "source": "b", "target": "c", "type": "参与" }
+  ]
+}

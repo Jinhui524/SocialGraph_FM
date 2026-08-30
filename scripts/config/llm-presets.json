@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "socialgraph-fm.llm-presets/2.0",
+  "presets": {
+    "openai_responses": {
+      "displayName": "OpenAI API",
+      "connectionKind": "direct",
+      "apiBase": "https://api.openai.com/v1",
+      "defaultApiMode": "responses",
+      "allowedApiModes": [
+        "responses",
+        "chat_completions"
+      ],
+      "defaultAuthScheme": "bearer",
+      "allowedAuthSchemes": [
+        "bearer"
+      ],
+      "anthropicVersion": null
+    },
+    "deepseek": {
+      "displayName": "DeepSeek API",
+      "connectionKind": "direct",
+      "apiBase": "https://api.deepseek.com",
+      "defaultApiMode": "chat_completions",
+      "allowedApiModes": [
+        "chat_completions",
+        "responses"
+      ],
+      "defaultAuthScheme": "bearer",
+      "allowedAuthSchemes": [
+        "bearer"
+      ],
+      "anthropicVersion": null
+    },
+    "glm": {
+      "displayName": "GLM API",
+      "connectionKind": "direct",
+      "apiBase": "https://open.bigmodel.cn/api/paas/v4",
+      "defaultApiMode": "chat_completions",
+      "allowedApiModes": [
+        "chat_completions",
+        "responses"
+      ],
+      "defaultAuthScheme": "bearer",
+      "allowedAuthSchemes": [
+        "bearer"
+      ],
+      "anthropicVersion": null
+    },
+    "anthropic": {
+      "displayName": "Anthropic API",
+      "connectionKind": "direct",
+      "apiBase": "https://api.anthropic.com/v1",
+      "defaultApiMode": "anthropic_messages",
+      "allowedApiModes": [
+        "anthropic_messages"
+      ],
+      "defaultAuthScheme": "x-api-key",
+      "allowedAuthSchemes": [
+        "x-api-key"
+      ],
+      "anthropicVersion": "2023-06-01"
+    },
+    "custom": {
+      "displayName": "Custom OpenAI-compatible relay",
+      "connectionKind": "custom_relay",
+      "apiBase": null,
+      "defaultApiMode": "chat_completions",
+      "allowedApiModes": [
+        "chat_completions",
+        "responses"
+      ],
+      "defaultAuthScheme": "bearer",
+      "allowedAuthSchemes": [
+        "bearer",
+        "x-api-key"
+      ],
+      "anthropicVersion": null
+    },
+    "custom_anthropic": {
+      "displayName": "Custom Anthropic-compatible relay",
+      "connectionKind": "custom_relay",
+      "apiBase": null,
+      "defaultApiMode": "anthropic_messages",
+      "allowedApiModes": [
+        "anthropic_messages"
+      ],
+      "defaultAuthScheme": "x-api-key",
+      "allowedAuthSchemes": [
+        "x-api-key",
+        "bearer"
+      ],
+      "anthropicVersion": "2023-06-01"
+    }
+  }
+}

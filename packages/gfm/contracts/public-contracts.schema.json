@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/contracts/public-contract-registry/1.0",
+  "title": "SocialGraph-FM public contract schema registry",
+  "description": "Machine-verifiable registry for the API wire contracts. x-modelSchemaSha256 values hash each complete Pydantic JSON Schema after canonical JSON serialization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractName",
+    "payload"
+  ],
+  "properties": {
+    "contractName": {
+      "type": "string",
+      "enum": [
+        "TimeRange",
+        "FeatureManifest",
+        "GraphSnapshotRef",
+        "CorpusManifest",
+        "CoreTaskManifest",
+        "TrainingRunManifest",
+        "CheckpointManifest",
+        "ModelCapability",
+        "FindingEvidence",
+        "CoreFinding",
+        "CompatibilityMapping",
+        "CompatibilityIssue",
+        "GfmCompatibilityReport",
+        "GfmReadiness",
+        "CoreCapabilitiesResponse",
+        "GfmTasksResponse",
+        "CoreRunRequest"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "description": "Validate with the named complete schema exposed by socialgraph_gfm.public_contracts."
+    }
+  },
+  "x-canonicalization": "UTF-8 canonical JSON; object keys sorted by Unicode code point; NaN and Infinity forbidden",
+  "x-modelSchemaSha256": {
+    "CheckpointManifest": "113f7f69b09b4c40cdaa96d2875560ce8ee7ae33ab56d97d2a68619f09c20800",
+    "CompatibilityIssue": "c5fbe340e1c7de5162009e31abc848fc980822aeaef600009b3bc5a323efb337",
+    "CompatibilityMapping": "358fc88f0db9c1c3ae84c477e56c061d86a06e2d6f6aa6e92d6c4bfbe61bc50e",
+    "CoreCapabilitiesResponse": "34b8751cd496b34ce4c2721628ee266cf7e4f890d3de8e0601ba2d71bdc91993",
+    "CoreFinding": "b676e45fe433f14e277b28e1ef622ca42ab50c68836cb69725aea485b95e3222",
+    "CoreRunRequest": "4f1e4ce441fe35fefa91e3ff34b4cea7be57547e98c2d82cd1e4d90f793249dd",
+    "CoreTaskManifest": "eb6c70d737bbb9ed3eb667cdbf11ff9b014504273ed3264680255e0af4661340",
+    "CorpusManifest": "aa1ff23127f5237401205ee28b126cfe0d4aae767c6df8297769ffa0a571c3c0",
+    "FeatureManifest": "9f2870e677a6fa7039a314312260ea6409f7d126bda9aba7baffddc3afc764b4",
+    "FindingEvidence": "c265f3ae2eb18d1cdf911a13ce8f446f0e6769c2d213e097c8f6b51d31aabe56",
+    "GfmCompatibilityReport": "da0fea309209dbf4dbeb51797d9f0ff4d206b06791d0d87661e0b86b32313ff4",
+    "GfmReadiness": "bc418f3678e220cd2fc9813f36bf7bb5b6f2d95aea5deb4a180f4221cf728361",
+    "GfmTasksResponse": "c4edbb682a112d4280de69f56d40e7eae41edfb210efd93c1dfa3876920835e4",
+    "GraphSnapshotRef": "8610290e5f2daa256095b680766f93fb8a244bd904a744a3a1ee4d46b8a6cebb",
+    "ModelCapability": "1e9c2176911c8ec8dbd73ec8993818fda85377bca2e046ba2123f35a67d8cd6b",
+    "TimeRange": "5522f9c24f2e9e45c0a1f03c6028f175b278b8920d26fd9069980b6abf4af400",
+    "TrainingRunManifest": "47f571a36a07f809dbcacaf6439ce819e16c0446fad6585f517d0efcb3660163"
+  }
+}

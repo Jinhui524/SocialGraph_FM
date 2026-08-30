@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "socialgraph-fm.global-model-config/1.0",
+  "releaseId": "socialgraph-fm",
+  "taskId": "coordination_risk",
+  "seed": 12121995,
+  "splitIndex": 0,
+  "model": {
+    "textDim": 768,
+    "structuralDim": 128,
+    "branchDim": 128,
+    "hiddenDim": 256,
+    "gnnLayers": 2,
+    "dropout": 0.2,
+    "routerEnabled": true,
+    "routerBottleneckDim": 64,
+    "routerExperts": 8,
+    "routerTopK": 2
+  },
+  "training": {
+    "maxSteps": 1000,
+    "minSteps": 100,
+    "evalEverySteps": 25,
+    "patienceEvals": 8,
+    "learningRate": 0.001,
+    "weightDecay": 0.0,
+    "seedBatchSize": 128,
+    "numNeighbors": [20, 10],
+    "memorySmokeBatchSizes": [256, 128, 64],
+    "maxPeakMiB": 5632,
+    "gradientClipNorm": 1.0,
+    "routerBalanceWeight": 0.01,
+    "amp": true,
+    "checkpointEverySteps": 25,
+    "numWorkers": 0
+  },
+  "selection": {
+    "primaryMetric": "country-balanced-macro-f1",
+    "thresholdMetric": "country-balanced-macro-f1",
+    "calibration": "binary-logit"
+  },
+  "protocols": {
+    "in_domain": {
+      "train": [{"country": "russia", "variant": "base", "split": "train"}],
+      "select": [{"country": "russia", "variant": "base", "split": "validation"}],
+      "calibrate": [{"country": "russia", "variant": "base", "split": "validation"}],
+      "evaluate": [{"country": "russia", "variant": "base", "split": "test"}]
+    },
+    "low_label": {
+      "train": [{"country": "russia", "variant": "0.95U", "split": "train"}],
+      "select": [{"country": "russia", "variant": "base", "split": "validation"}],
+      "calibrate": [{"country": "russia", "variant": "base", "split": "validation"}],
+      "evaluate": [{"country": "russia", "variant": "base", "split": "test"}]
+    },
+    "cross_domain": {
+      "train": [
+        {"country": "china", "variant": "base", "split": "train"},
+        {"country": "cuba", "variant": "base", "split": "train"},
+        {"country": "iran", "variant": "base", "split": "train"},
+        {"country": "UAE", "variant": "base", "split": "train"},
+        {"country": "venezuela", "variant": "base", "split": "train"}
+      ],
+      "select": [
+        {"country": "china", "variant": "base", "split": "validation"},
+        {"country": "cuba", "variant": "base", "split": "validation"},
+        {"country": "iran", "variant": "base", "split": "validation"},
+        {"country": "UAE", "variant": "base", "split": "validation"},
+        {"country": "venezuela", "variant": "base", "split": "validation"}
+      ],
+      "calibrate": [
+        {"country": "china", "variant": "base", "split": "validation"},
+        {"country": "cuba", "variant": "base", "split": "validation"},
+        {"country": "iran", "variant": "base", "split": "validation"},
+        {"country": "UAE", "variant": "base", "split": "validation"},
+        {"country": "venezuela", "variant": "base", "split": "validation"}
+      ],
+      "evaluate": [{"country": "russia", "variant": "base", "split": "test"}],
+      "targetPolicy": "source-only-selection-then-single-frozen-target-test"
+    },
+    "global": {
+      "train": [
+        {"country": "china", "variant": "base", "split": "train"},
+        {"country": "cuba", "variant": "base", "split": "train"},
+        {"country": "iran", "variant": "base", "split": "train"},
+        {"country": "russia", "variant": "base", "split": "train"},
+        {"country": "UAE", "variant": "base", "split": "train"},
+        {"country": "venezuela", "variant": "base", "split": "train"}
+      ],
+      "select": [
+        {"country": "china", "variant": "base", "split": "validation"},
+        {"country": "cuba", "variant": "base", "split": "validation"},
+        {"country": "iran", "variant": "base", "split": "validation"},
+        {"country": "russia", "variant": "base", "split": "validation"},
+        {"country": "UAE", "variant": "base", "split": "validation"},
+        {"country": "venezuela", "variant": "base", "split": "validation"}
+      ],
+      "calibrate": [
+        {"country": "china", "variant": "base", "split": "validation"},
+        {"country": "cuba", "variant": "base", "split": "validation"},
+        {"country": "iran", "variant": "base", "split": "validation"},
+        {"country": "russia", "variant": "base", "split": "validation"},
+        {"country": "UAE", "variant": "base", "split": "validation"},
+        {"country": "venezuela", "variant": "base", "split": "validation"}
+      ],
+      "evaluate": [
+        {"country": "china", "variant": "base", "split": "test"},
+        {"country": "cuba", "variant": "base", "split": "test"},
+        {"country": "iran", "variant": "base", "split": "test"},
+        {"country": "russia", "variant": "base", "split": "test"},
+        {"country": "UAE", "variant": "base", "split": "test"},
+        {"country": "venezuela", "variant": "base", "split": "test"}
+      ]
+    }
+  }
+}

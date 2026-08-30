@@ -1,0 +1,5 @@
+-r requirements.txt
+mypy>=1.10,<2
+pip-audit>=2.9,<3
+pytest>=9.0.3,<10
+ruff>=0.9,<1

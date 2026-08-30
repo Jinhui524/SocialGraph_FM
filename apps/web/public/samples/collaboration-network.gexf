@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gexf xmlns="http://gexf.net/1.3" version="1.3">
+  <graph defaultedgetype="undirected">
+    <attributes class="node">
+      <attribute id="node-type" title="type" type="string" />
+    </attributes>
+    <attributes class="edge">
+      <attribute id="event-time" title="timestamp" type="string" />
+    </attributes>
+    <nodes>
+      <node id="researcher-a" label="研究者甲"><attvalues><attvalue for="node-type" value="person" /></attvalues></node>
+      <node id="researcher-b" label="研究者乙"><attvalues><attvalue for="node-type" value="person" /></attvalues></node>
+      <node id="lab" label="社会治理实验室"><attvalues><attvalue for="node-type" value="organization" /></attvalues></node>
+    </nodes>
+    <edges>
+      <edge id="e1" source="researcher-a" target="researcher-b" label="合作" weight="4"><attvalues><attvalue for="event-time" value="2025-06-01" /></attvalues></edge>
+      <edge id="e2" source="researcher-a" target="lab" label="隶属" weight="1"><attvalues><attvalue for="event-time" value="2025-01-01" /></attvalues></edge>
+      <edge id="e3" source="researcher-b" target="lab" label="隶属" weight="1"><attvalues><attvalue for="event-time" value="2025-01-01" /></attvalues></edge>
+    </edges>
+  </graph>
+</gexf>

@@ -1,0 +1,17 @@
+{
+  "name": "socialgraph-fm-governance",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "onboard": "node scripts/run-python-cli.mjs onboard",
+    "dev": "node scripts/run-python-cli.mjs dev",
+    "build": "npm --prefix apps/web run build",
+    "test:web": "npm --prefix apps/web test",
+    "typecheck:web": "npm --prefix apps/web run typecheck",
+    "bootstrap:all": "node scripts/run-python-cli.mjs setup --profile cuda --env-mode auto",
+    "dev:all": "node scripts/run-python-cli.mjs dev",
+    "start:all": "node scripts/run-python-cli.mjs start",
+    "stop:all": "node scripts/run-python-cli.mjs stop",
+    "verify:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-all.ps1"
+  }
+}

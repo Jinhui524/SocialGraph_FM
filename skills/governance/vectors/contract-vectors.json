@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "socialgraph-fm.governance-skill-vectors/1.0",
+  "catalogSchemaVersion": "socialgraph-fm.governance-skills/1.0",
+  "orderedSkills": [
+    "inspect_graph",
+    "run_governance_analysis",
+    "get_evidence_subgraph",
+    "discover_coordination_groups",
+    "rank_coordination_relations",
+    "retrieve_similar_cases",
+    "get_model_dataset_cards",
+    "draft_review_report"
+  ],
+  "readOnlySkills": [
+    "inspect_graph",
+    "get_evidence_subgraph",
+    "discover_coordination_groups",
+    "rank_coordination_relations",
+    "retrieve_similar_cases",
+    "get_model_dataset_cards"
+  ],
+  "confirmationGatedSkills": ["run_governance_analysis", "draft_review_report"],
+  "validParameters": [
+    { "skill": "inspect_graph", "params": {} },
+    { "skill": "run_governance_analysis", "params": { "protocol": "global", "topK": 100 } },
+    { "skill": "get_evidence_subgraph", "params": { "runId": "governance-11111111111111111111111111111111", "nodeId": "synthetic:1" } },
+    { "skill": "discover_coordination_groups", "params": { "runId": "governance-11111111111111111111111111111111", "offset": 0, "limit": 50 } },
+    { "skill": "rank_coordination_relations", "params": { "runId": "governance-11111111111111111111111111111111", "relationKind": "factual", "modalities": ["coRT"] } },
+    { "skill": "retrieve_similar_cases", "params": { "caseId": "case-22222222222222222222222222222222", "limit": 10 } },
+    { "skill": "get_model_dataset_cards", "params": {} },
+    { "skill": "draft_review_report", "params": { "caseId": "case-22222222222222222222222222222222", "format": "markdown" } }
+  ],
+  "invalidParameters": [
+    { "skill": "inspect_graph", "params": { "scopeNodeIds": ["b", "a"] }, "reason": "scopeNodeIds must use canonical sorted order" },
+    { "skill": "run_governance_analysis", "params": { "protocol": "global", "topK": 0 }, "reason": "topK is bounded" },
+    { "skill": "get_evidence_subgraph", "params": { "runId": "not-a-run", "nodeId": "synthetic:1" }, "reason": "runId is hash-shaped" },
+    { "skill": "discover_coordination_groups", "params": { "runId": "governance-11111111111111111111111111111111", "limit": 101 }, "reason": "public pages are bounded to 100" },
+    { "skill": "rank_coordination_relations", "params": { "runId": "governance-11111111111111111111111111111111", "relationKind": "potential", "modalities": ["coRT"] }, "reason": "potential relations cannot claim factual modalities" },
+    { "skill": "retrieve_similar_cases", "params": { "caseId": "case-22222222222222222222222222222222", "runId": "governance-11111111111111111111111111111111", "kindEntries": [{ "kind": "node", "targetIds": ["synthetic:1"] }] }, "reason": "case and target queries are mutually exclusive" },
+    { "skill": "get_model_dataset_cards", "params": { "path": "local" }, "reason": "empty parameters reject extra fields" },
+    { "skill": "draft_review_report", "params": { "caseId": "case-22222222222222222222222222222222", "format": "pdf" }, "reason": "only deterministic markdown or JSON is supported" }
+  ],
+  "validInternalParameters": [
+    { "command": "inspect_graph", "params": {} },
+    { "command": "run_governance_analysis", "params": { "protocol": "global", "topK": 100 } },
+    { "command": "get_evidence_subgraph", "params": { "runId": "governance-11111111111111111111111111111111", "nodeId": "synthetic:1" } },
+    { "command": "discover_coordination_groups", "params": { "runId": "governance-11111111111111111111111111111111", "offset": 0, "limit": 100 } },
+    { "command": "rank_coordination_relations", "params": { "runId": "governance-11111111111111111111111111111111", "relationKind": "factual", "modalities": ["coRT"], "limit": 1000 } },
+    { "command": "retrieve_similar_cases", "params": { "caseId": "case-22222222222222222222222222222222", "limit": 100 } },
+    { "command": "get_model_dataset_cards", "params": {} },
+    { "command": "draft_review_report", "params": { "caseId": "case-22222222222222222222222222222222", "caseHash": "3333333333333333333333333333333333333333333333333333333333333333", "runId": "governance-11111111111111111111111111111111", "resultHash": "4444444444444444444444444444444444444444444444444444444444444444", "kindEntries": [{ "kind": "node", "targetIds": ["synthetic:1"] }], "format": "markdown" } },
+    { "command": "index_case", "params": { "caseId": "case-22222222222222222222222222222222", "caseHash": "3333333333333333333333333333333333333333333333333333333333333333", "runId": "governance-11111111111111111111111111111111", "resultHash": "4444444444444444444444444444444444444444444444444444444444444444", "kindEntries": [{ "kind": "node", "targetIds": ["synthetic:1"] }], "concludedAt": "2026-08-29T00:00:00Z", "reviewHash": "5555555555555555555555555555555555555555555555555555555555555555", "reviewStatus": "concluded" } },
+    { "command": "search_knowledge", "params": { "query": "evidence review", "limit": 50 } }
+  ],
+  "invalidInternalParameters": [
+    { "command": "run_governance_analysis", "params": { "protocol": "global" }, "reason": "the API must materialize the default before crossing the process boundary" },
+    { "command": "discover_coordination_groups", "params": { "runId": "governance-11111111111111111111111111111111", "limit": 1001 }, "reason": "internal pages remain bounded" },
+    { "command": "draft_review_report", "params": { "caseId": "case-22222222222222222222222222222222", "format": "markdown" }, "reason": "the internal draft is bound to case/run/result hashes and selected targets" },
+    { "command": "index_case", "params": { "caseId": "case-22222222222222222222222222222222" }, "reason": "case indexing requires the complete immutable review binding" },
+    { "command": "search_knowledge", "params": { "query": "evidence", "limit": 51 }, "reason": "internal retrieval is bounded" }
+  ]
+}

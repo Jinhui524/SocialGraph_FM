@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/internal/governance-result.schema.json",
+  "title": "SocialGraph-FM Governance isolated GFM result envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commandId", "command", "status", "graph", "model", "result", "provenance", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": "socialgraph-fm.governance-result/1.0" },
+    "commandId": { "type": "string", "pattern": "^governance-command-[0-9a-f]{32}$" },
+    "command": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["completed", "confirmation_required"] },
+    "graph": { "$ref": "../public/skill-request.schema.json#/$defs/graph" },
+    "model": { "$ref": "../public/skill-request.schema.json#/$defs/model" },
+    "result": { "type": "object" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generatedAt", "implementationVersion", "inputHash"],
+      "properties": {
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "implementationVersion": { "const": "socialgraph-fm-gfm/governance-skills/1.0" },
+        "inputHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}

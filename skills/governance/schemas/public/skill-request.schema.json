@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/public/skill-request.schema.json",
+  "title": "SocialGraph-FM Governance public skill execution request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "skill", "graph", "model", "params"],
+  "properties": {
+    "schemaVersion": { "const": "socialgraph-fm.governance-skills/1.0" },
+    "skill": {
+      "enum": [
+        "inspect_graph",
+        "run_governance_analysis",
+        "get_evidence_subgraph",
+        "discover_coordination_groups",
+        "rank_coordination_relations",
+        "retrieve_similar_cases",
+        "get_model_dataset_cards",
+        "draft_review_report"
+      ]
+    },
+    "graph": { "$ref": "#/$defs/graph" },
+    "model": { "$ref": "#/$defs/model" },
+    "params": { "type": "object" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "datasetContentHash", "graphVersionHash"],
+      "properties": {
+        "artifactId": { "type": "string", "pattern": "^governance-artifact-[0-9a-f]{32}$" },
+        "datasetContentHash": { "$ref": "#/$defs/hash" },
+        "graphVersionHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelVersionId", "modelStateHash"],
+      "properties": {
+        "modelVersionId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "modelStateHash": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

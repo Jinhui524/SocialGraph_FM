@@ -1,0 +1,1 @@
+{"recipeId":"github-musae","nodes":[{"id":"0","features":["10","30"]},{"id":"1","features":["20"]},{"id":"2","features":["10"]},{"id":"3","features":[]}],"edges":[["0","1"],["1","2"],["2","3"],["3","0"],["0","2"]]}

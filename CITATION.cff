@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use SocialGraph-FM in research, please cite this software."
+title: "SocialGraph-FM: A Graph Foundation Model Workbench for Social Governance Research"
+type: software
+authors:
+  - name: "SocialGraph-FM contributors"
+abstract: >-
+  A Windows-first research workbench for deterministic social-graph analysis,
+  evidence-oriented human review, and governed Graph Foundation Model workflows.
+license: Apache-2.0
+keywords:
+  - graph foundation model
+  - social network analysis
+  - social governance
+  - human review
+  - graph machine learning

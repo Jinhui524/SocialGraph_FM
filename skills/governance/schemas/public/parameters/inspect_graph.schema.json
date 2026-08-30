@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/public/parameters/inspect_graph.schema.json",
+  "title": "inspect_graph parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "scopeNodeIds": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 100,
+      "uniqueItems": true,
+      "default": [],
+      "x-canonical-order": "lexicographic"
+    },
+    "runId": {
+      "anyOf": [
+        { "type": "string", "pattern": "^governance-[0-9a-f]{32}$" },
+        { "type": "null" }
+      ],
+      "default": null
+    },
+    "candidateLimit": { "type": "integer", "minimum": 1, "maximum": 5, "default": 5 }
+  }
+}

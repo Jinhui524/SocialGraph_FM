@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "1.0",
+  "samples": [
+    {
+      "id": "governance-collaboration",
+      "name": "社区跨区协作网络",
+      "file": "/samples/governance-collaboration.csv",
+      "format": "csv",
+      "kind": "positive",
+      "suggestedPrompt": "找出连接两个社区的桥接节点并高亮"
+    },
+    {
+      "id": "heterogeneous-community",
+      "name": "人员—组织—项目异构关系",
+      "file": "/samples/heterogeneous-community.json",
+      "format": "json",
+      "kind": "positive",
+      "suggestedPrompt": "查看跨区应急联动项目的两跳邻居"
+    },
+    {
+      "id": "manual-mapping",
+      "name": "需要手工字段映射的 TSV",
+      "file": "/samples/manual-mapping.tsv",
+      "format": "tsv",
+      "kind": "mapping",
+      "suggestedPrompt": "生成这张互动网络的结构概览"
+    },
+    {
+      "id": "community-bridge-graphml",
+      "name": "GraphML 桥接结构",
+      "file": "/samples/community-bridge.graphml",
+      "format": "graphml",
+      "kind": "positive",
+      "suggestedPrompt": "找出桥接节点"
+    },
+    {
+      "id": "collaboration-gexf",
+      "name": "GEXF 合作关系",
+      "file": "/samples/collaboration-network.gexf",
+      "format": "gexf",
+      "kind": "positive",
+      "suggestedPrompt": "展示合作关系并按节点类型筛选"
+    },
+    {
+      "id": "invalid-dangling-edge",
+      "name": "悬空边校验样例",
+      "file": "/samples/invalid-dangling-edge.json",
+      "format": "json",
+      "kind": "validation"
+    },
+    {
+      "id": "invalid-duplicate-node",
+      "name": "重复节点校验样例",
+      "file": "/samples/invalid-duplicate-node.json",
+      "format": "json",
+      "kind": "validation"
+    }
+  ]
+}

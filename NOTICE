@@ -1,0 +1,12 @@
+SocialGraph-FM
+Copyright 2026 SocialGraph-FM contributors
+
+This product includes software developed by the SocialGraph-FM contributors and is
+licensed under the Apache License, Version 2.0.
+
+The Web application redistributes the Inter and Noto Sans SC fonts under the SIL Open
+Font License, Version 1.1. Their copyright and license texts are retained beside the font
+files under apps/web/public/assets/fonts/.
+
+Additional attribution and redistribution boundaries are documented in
+THIRD_PARTY_NOTICES.md.

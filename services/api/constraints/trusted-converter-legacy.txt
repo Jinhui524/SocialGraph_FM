@@ -1,0 +1,17 @@
+# Exact legacy converter constraints. This environment is never used as the public API runtime.
+filelock==3.32.0
+fsspec==2026.6.0
+jinja2==3.1.6
+joblib==1.5.3
+markupsafe==3.0.3
+mpmath==1.4.1
+networkx==3.4.2
+numpy==1.26.4
+pip==26.1.2
+scikit-learn==1.3.2
+scipy==1.11.4
+sympy==1.14.0
+threadpoolctl==3.6.0
+torch==2.1.1
+typing-extensions==4.16.0
+

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "socialgraph-fm.research-config/1.0",
+  "releaseId": "research",
+  "seed": 1729,
+  "preliminary": true,
+  "formalReadinessUnaffected": true,
+  "model": {
+    "hiddenDim": 128,
+    "encoderLayers": 3,
+    "dropout": 0.2,
+    "fieldMaskRate": 0.15,
+    "edgeMaskRate": 0.1,
+    "learningRate": 0.001,
+    "weightDecay": 0.0001,
+    "pretrainEpochs": 60,
+    "pretrainPatience": 8,
+    "headEpochs": 100,
+    "headPatience": 10,
+    "fullBatchEdgeThreshold": 1500000,
+    "neighborFallback": {"fanout": [20, 10, 5], "batchSize": 2048}
+  },
+  "datasets": [
+    {
+      "datasetFamily": "twitch-language",
+      "graphIds": ["twitch-DE", "twitch-EN", "twitch-ES", "twitch-FR", "twitch-PT", "twitch-RU"],
+      "sourceFiles": {"twitch.zip": "65a6c4c23da23889517734a8c947e522b2f0c7db179559a3904aeb8793d004dc"},
+      "excludedInputFields": ["mature"]
+    },
+    {
+      "datasetFamily": "tolokers",
+      "graphIds": ["tolokers"],
+      "sourceFiles": {"tolokers.npz": "dacf3ac94cec53d03cd2adb5255c08b33dee1656c33ca8164a464bd9450a1667"},
+      "excludedInputFields": ["banned"]
+    },
+    {
+      "datasetFamily": "wiki-rfa",
+      "graphIds": ["wiki-rfa"],
+      "sourceFiles": {"wiki-RfA.txt.gz": "88d53196fb2564a2e20286dbba818832f718cc352bb181a2101d23d2556f0862"},
+      "excludedInputFields": ["TXT", "DAT", "YEA", "RES", "VOT"]
+    },
+    {
+      "datasetFamily": "email-eu-core",
+      "graphIds": ["email-eu-core"],
+      "sourceFiles": {
+        "email-Eu-core.txt.gz": "4b47acdb80197b085fe63c819c357ae488131ee904ed93d1b219a68b0f9e245f",
+        "email-Eu-core-department-labels.txt.gz": "e5abe5b4581a480032a63adcf2576c161785f45692642c6ebb0b1276f0f33669"
+      },
+      "excludedInputFields": ["department"]
+    }
+  ]
+}

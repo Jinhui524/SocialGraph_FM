@@ -1,0 +1,10 @@
+{
+  "nodes": [
+    { "id": "duplicate", "label": "第一次出现" },
+    { "id": "duplicate", "label": "重复记录" },
+    { "id": "other", "label": "其他节点" }
+  ],
+  "edges": [
+    { "id": "edge-1", "source": "duplicate", "target": "other", "type": "协作" }
+  ]
+}

@@ -1,0 +1,60 @@
+# Secrets and local configuration
+**/.env
+**/.env.*
+!**/.env.example
+**/*.token
+**/*.key
+
+# Python environments, caches, and generated output
+**/.venv/
+**/.venv-*/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.coverage
+**/htmlcov/
+**/build/
+**/*.egg-info/
+
+# JavaScript dependencies and generated output
+**/node_modules/
+**/dist/
+**/coverage/
+**/test-results/
+**/playwright-report/
+
+# Runtime state, local data, reports, and logs
+var/*
+!var/.gitkeep
+data/
+**/artifacts/
+**/*.log
+**/*.sqlite
+**/*.sqlite3
+
+# Model, tensor, archive, and private dataset formats
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.safetensors
+**/*.onnx
+**/*.pkl
+**/*.npz
+
+# Public runtime bundle and contract-bound example archives
+!bundles/**/*.pt
+!bundles/**/*.npz
+!bundles/**/*.sqlite3
+!examples/governance/**/*.zip
+
+# Internal agent and worktree state
+.superpowers/
+**/.superpowers/
+.worktrees/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp

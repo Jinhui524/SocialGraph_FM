@@ -1,0 +1,10 @@
+{
+  "nodes": [
+    { "id": "known-a", "label": "已知节点 A" },
+    { "id": "known-b", "label": "已知节点 B" }
+  ],
+  "edges": [
+    { "id": "valid", "source": "known-a", "target": "known-b", "type": "合作" },
+    { "id": "dangling", "source": "known-a", "target": "missing-node", "type": "错误关系" }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "gfm.canonical-golden/1.0",
+  "vectors": [
+    {
+      "name": "unicode-code-point-order",
+      "value": {
+        "中": "治理",
+        "a": [1, true, null],
+        "é": "NFD",
+        "é": "NFC",
+        "": "bmp",
+        "😀": "supplementary"
+      },
+      "canonical": "{\"a\":[1,true,null],\"é\":\"NFD\",\"é\":\"NFC\",\"中\":\"治理\",\"\":\"bmp\",\"😀\":\"supplementary\"}",
+      "sha256": "62ab26a3c31ba3ad4abb7d9628f7132c3c47e86e36a28724478a46d7248619c9"
+    },
+    {
+      "name": "ecmascript-number-format",
+      "value": {
+        "negativeZero": -0.0,
+        "zero": 0.0,
+        "integerFloat": 1.0,
+        "fixedLower": 0.000001,
+        "scientificLower": 1e-7,
+        "fixedUpper": 1e20,
+        "scientificUpper": 1e21
+      },
+      "canonical": "{\"fixedLower\":0.000001,\"fixedUpper\":100000000000000000000,\"integerFloat\":1,\"negativeZero\":0,\"scientificLower\":1e-7,\"scientificUpper\":1e+21,\"zero\":0}",
+      "sha256": "0c16be8386fd988e52c218567b596e3cc731be99eb9f1df8549827de9d43c20a"
+    }
+  ]
+}

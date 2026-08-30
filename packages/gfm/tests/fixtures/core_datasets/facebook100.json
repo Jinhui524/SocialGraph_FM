@@ -1,0 +1,1 @@
+{"recipeId":"facebook100","graphId":"Penn94","nodes":[{"id":"100","gender":"1","major":"10","secondMajor":null,"dorm":"2","year":"2008","highSchool":"20"},{"id":"200","gender":"2","major":"11","secondMajor":"12","dorm":"3","year":"2009","highSchool":"21"}],"edges":[["100","200"]]}

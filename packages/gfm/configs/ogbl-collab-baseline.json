@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "gfm.baseline-config/1.0",
+  "configId": "ogbl-collab-baseline",
+  "tracks": [
+    "ogb_official",
+    "strict_edge_time"
+  ],
+  "models": [
+    "cn",
+    "aa",
+    "ra",
+    "mlp",
+    "graphsage"
+  ],
+  "devSeed": 20260811,
+  "formalSeeds": [
+    20260812,
+    20260813,
+    20260814
+  ],
+  "hiddenChannels": 128,
+  "dropout": 0.2,
+  "learningRate": 0.001,
+  "weightDecay": 0.0,
+  "gradientClip": 1.0,
+  "negativeRatio": 1.0,
+  "neighborFanout": [
+    15,
+    10
+  ],
+  "candidateBatchSizes": [
+    4096,
+    2048,
+    1024
+  ],
+  "cudaMemoryLimitMiB": 7168,
+  "devEpochs": 5,
+  "devPositiveLimit": 50000,
+  "formalMaxEpochs": 50,
+  "formalMinEpochs": 10,
+  "evalEvery": 2,
+  "patience": 8,
+  "trainPositiveLimit": 262144,
+  "scoreBatchSize": 65536,
+  "inferenceBatchSize": 8192,
+  "maxCheckpointsPerRun": 3,
+  "officialMinValidationHits50": 0.4,
+  "officialMinTestHits50": 0.35,
+  "officialMinTestGainOverMlp": 0.05
+}

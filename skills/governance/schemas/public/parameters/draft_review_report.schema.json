@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/public/parameters/draft_review_report.schema.json",
+  "title": "draft_review_report public parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caseId", "format"],
+  "properties": {
+    "caseId": { "type": "string", "pattern": "^case-[0-9a-f]{32}$" },
+    "format": { "enum": ["markdown", "json"] }
+  }
+}

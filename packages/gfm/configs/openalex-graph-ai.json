@@ -1,0 +1,88 @@
+{
+  "schemaVersion": "gfm.openalex-spec/1.0",
+  "specId": "graph-ai",
+  "source": "https://api.openalex.org",
+  "license": "CC0-1.0",
+  "publicationDate": {
+    "from": "2016-01-01",
+    "to": "2025-12-31"
+  },
+  "workTypes": [
+    "article",
+    "preprint"
+  ],
+  "workTypeCompatibility": {
+    "requestedCategories": ["article", "preprint", "proceedings-article"],
+    "proceedings-article": "OpenAlex current taxonomy represents conference papers as type=article with a conference source",
+    "documentation": "https://developers.openalex.org/api-reference/work-types"
+  },
+  "maximumUniqueWorks": 200000,
+  "topicClusters": [
+    {
+      "clusterId": "graph-network-intelligence",
+      "maximumWorks": 70000,
+      "selectors": [
+        "Advanced Graph Neural Networks",
+        "Complex Network Analysis Techniques",
+        "Social Capital and Networks",
+        "scientometrics and bibliometrics research"
+      ]
+    },
+    {
+      "clusterId": "language-intelligence",
+      "maximumWorks": 65000,
+      "selectors": [
+        "Natural Language Processing Techniques",
+        "Topic Modeling",
+        "Computational and Text Analysis Methods",
+        "Speech and dialogue systems"
+      ]
+    },
+    {
+      "clusterId": "software-collaboration",
+      "maximumWorks": 65000,
+      "selectors": [
+        "Software Engineering Research",
+        "Software Engineering Techniques and Practices",
+        "Open Source Software Innovations"
+      ]
+    }
+  ],
+  "workSelect": [
+    "id",
+    "doi",
+    "display_name",
+    "publication_date",
+    "publication_year",
+    "type",
+    "authorships",
+    "primary_topic",
+    "topics",
+    "primary_location",
+    "referenced_works",
+    "ids",
+    "updated_date"
+  ],
+  "forbiddenFields": [
+    "abstract_inverted_index",
+    "works_count",
+    "cited_by_count",
+    "counts_by_year",
+    "summary_stats",
+    "last_known_institution",
+    "last_known_institutions"
+  ],
+  "sampling": {
+    "strategy": "year-topic-stable-sha256",
+    "seed": 20260820,
+    "deduplicateBy": "openalex_id"
+  },
+  "newcomer": {
+    "historyVerification": "global-author-work-group-by-year",
+    "observationDays": 90,
+    "horizonDays": 365,
+    "minimumSupporterPriorWorks": 3,
+    "supporterRecentActivityDays": 730,
+    "candidateHops": [2, 3]
+  }
+}

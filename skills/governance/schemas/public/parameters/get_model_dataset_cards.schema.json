@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/public/parameters/get_model_dataset_cards.schema.json",
+  "title": "get_model_dataset_cards parameters",
+  "type": "object",
+  "additionalProperties": false
+}

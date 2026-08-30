@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialgraph-fm.local/schemas/governance/public/catalog-source.schema.json",
+  "title": "SocialGraph-FM Governance product skill catalog source",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "contractSchema", "namespace", "schemaVersion", "implementationVersion", "items"],
+  "properties": {
+    "$schema": { "const": "https://json-schema.org/draft/2020-12/schema" },
+    "contractSchema": { "const": "schemas/public/catalog-source.schema.json" },
+    "namespace": { "const": "socialgraph-fm.product-skills.governance" },
+    "schemaVersion": { "const": "socialgraph-fm.governance-skills/1.0" },
+    "implementationVersion": { "const": "socialgraph-fm-gfm/governance-skills/1.0" },
+    "items": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/skill" }
+    }
+  },
+  "$defs": {
+    "skillName": {
+      "enum": [
+        "inspect_graph",
+        "run_governance_analysis",
+        "get_evidence_subgraph",
+        "discover_coordination_groups",
+        "rank_coordination_relations",
+        "retrieve_similar_cases",
+        "get_model_dataset_cards",
+        "draft_review_report"
+      ]
+    },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "readOnly",
+        "confirmationRequired",
+        "description",
+        "parameterSchema",
+        "internalCommand"
+      ],
+      "properties": {
+        "name": { "$ref": "#/$defs/skillName" },
+        "readOnly": { "type": "boolean" },
+        "confirmationRequired": { "type": "boolean" },
+        "confirmationAction": { "enum": ["run_governance_analysis", "save_draft_report"] },
+        "description": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "parameterSchema": {
+          "type": "string",
+          "pattern": "^schemas/public/parameters/[a-z0-9_]+\\.schema\\.json$"
+        },
+        "internalCommand": { "$ref": "#/$defs/skillName" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "confirmationRequired": { "const": true } } },
+          "then": {
+            "required": ["confirmationAction"],
+            "properties": { "readOnly": { "const": false } }
+          },
+          "else": {
+            "properties": { "readOnly": { "const": true } },
+            "not": { "required": ["confirmationAction"] }
+          }
+        }
+      ]
+    }
+  }
+}
