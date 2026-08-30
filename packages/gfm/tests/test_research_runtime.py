@@ -3,7 +3,6 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -1184,10 +1183,9 @@ def test_twitch_similarity_uses_unique_domain_identities(
 
 
 def test_published_fixture_serves_four_real_scenarios_in_fresh_process(
-    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    root = Path(os.environ["TEMP"]) / f"sr1-{uuid.uuid4().hex[:8]}"
-    request.addfinalizer(lambda: shutil.rmtree(root, ignore_errors=True))
+    root = tmp_path_factory.mktemp("sr1")
     fixtures = Path(__file__).parent / "fixtures/core_datasets"
     materialize_fixture_corpus(root, fixtures)
     train_research_model(root, device="cpu", pretrain_epochs=1, head_epochs=1)

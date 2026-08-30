@@ -73,6 +73,15 @@ def _create_directory_link(link: Path, target: Path) -> None:
     link.symlink_to(target, target_is_directory=True)
 
 
+def _remove_directory_link(link: Path) -> None:
+    """Remove a junction on Windows or the link itself on POSIX."""
+
+    if os.name == "nt":
+        os.rmdir(link)
+    else:
+        link.unlink()
+
+
 def _source() -> SourceProvenance:
     return SourceProvenance(
         sourceName="literal-test-source",
@@ -926,7 +935,10 @@ def test_post_link_evidence_identity_change_preserves_replacement(
             target.write_bytes(b"racer")
 
     monkeypatch.setattr(formal_preflight, "_PUBLICATION_SEAM", replace_owned_link)
-    with pytest.raises(ValueError, match="identity changed"):
+    with pytest.raises(
+        ValueError,
+        match=r"atomic evidence publication (?:identity changed|verification failed)",
+    ):
         run_formal_preflight(tmp_path, publish_to=output)
     assert output.read_bytes() == b"racer"
 
@@ -1002,7 +1014,12 @@ def test_post_rename_rollback_preserves_same_name_child_replacement(
         (committed / "bundle.json").write_bytes(b"COMPETITOR-REPLACEMENT")
 
     monkeypatch.setattr(formal_preflight, "_PUBLICATION_SEAM", replace_child)
-    with pytest.raises(ValueError, match="published experiment dataset"):
+    expected_error = (
+        "published experiment dataset"
+        if os.name == "nt"
+        else "owned child is no longer published"
+    )
+    with pytest.raises(ValueError, match=expected_error):
         publish_experiment_dataset(
             runtime_root=tmp_path,
             requirement_id="email-eu-core",
@@ -1072,7 +1089,7 @@ def test_evidence_publication_never_commits_through_replaced_ancestor(
 
     assert not (outside / output.name).exists()
     if linked:
-        os.rmdir(output.parent)
+        _remove_directory_link(output.parent)
 
 
 def test_dataset_publication_never_commits_through_replaced_ancestor(
@@ -1106,7 +1123,7 @@ def test_dataset_publication_never_commits_through_replaced_ancestor(
     assert not (outside / "email-eu-core").exists()
     assert not committed_outside
     if linked:
-        os.rmdir(runtime / "experiment-corpus")
+        _remove_directory_link(runtime / "experiment-corpus")
 
 
 @pytest.mark.parametrize("publisher", ["evidence", "dataset"])

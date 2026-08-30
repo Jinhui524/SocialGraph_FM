@@ -8,10 +8,12 @@ import json
 import os
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.lib import format as npy_format
 
 from socialgraph_gfm.global_model.corpus import load_corpus_index
 
@@ -29,8 +31,34 @@ def _sha256(path: Path) -> str:
 def _write_zip_member(archive: zipfile.ZipFile, source: Path, name: str) -> None:
     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_DEFLATED
+    info.create_system = 0
     info.external_attr = 0o100644 << 16
     archive.writestr(info, source.read_bytes(), compresslevel=6)
+
+
+def _write_deterministic_npz(path: Path, arrays: Mapping[str, np.ndarray]) -> None:
+    """Write NumPy arrays without embedding the host OS in ZIP metadata."""
+
+    with zipfile.ZipFile(
+        path,
+        mode="x",
+        compression=zipfile.ZIP_DEFLATED,
+        allowZip64=True,
+    ) as archive:
+        for name in sorted(arrays):
+            value = arrays[name]
+            info = zipfile.ZipInfo(f"{name}.npy", date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 0
+            info.external_attr = 0o600 << 16
+            with archive.open(info, mode="w", force_zip64=True) as stream:
+                npy_format.write_array(
+                    stream,
+                    np.asanyarray(value),
+                    allow_pickle=False,
+                )
+    with path.open("r+b") as stream:
+        os.fsync(stream.fileno())
 
 
 def create_russia_demo_bundle(global_model_root: str | Path, output: str | Path) -> Path:
@@ -85,14 +113,13 @@ def create_russia_demo_bundle(global_model_root: str | Path, output: str | Path)
 
         features_path = temporary / "features.npz"
         feature_ids = np.asarray(node_ids)
-        with features_path.open("xb") as stream:
-            np.savez_compressed(
-                stream,
-                node_ids=feature_ids,
-                text_features=np.asarray(corpus.text_features, dtype=np.float32),
-            )
-            stream.flush()
-            os.fsync(stream.fileno())
+        _write_deterministic_npz(
+            features_path,
+            {
+                "node_ids": feature_ids,
+                "text_features": np.asarray(corpus.text_features, dtype=np.float32),
+            },
+        )
         files = {
             name: {"sha256": _sha256(path), "bytes": path.stat().st_size}
             for name, path in (
@@ -172,10 +199,10 @@ def create_tiny_contract_bundle(output: str | Path) -> Path:
         features = np.linspace(-1.0, 1.0, num=len(node_ids) * 768, dtype=np.float32).reshape(
             len(node_ids), 768
         )
-        with features_path.open("xb") as stream:
-            np.savez_compressed(stream, node_ids=np.asarray(node_ids), text_features=features)
-            stream.flush()
-            os.fsync(stream.fileno())
+        _write_deterministic_npz(
+            features_path,
+            {"node_ids": np.asarray(node_ids), "text_features": features},
+        )
         files = {
             name: {"sha256": _sha256(path), "bytes": path.stat().st_size}
             for name, path in (

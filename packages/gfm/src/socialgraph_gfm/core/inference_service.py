@@ -207,7 +207,9 @@ def atomic_publish_session_token(path: str | Path) -> str:
 def _verify_windows_private_acl(path: Path, sid: str) -> None:
     escaped = str(path).replace("'", "''")
     script = (
+        "$ErrorActionPreference='Stop';"
         f"$a=Get-Acl -LiteralPath '{escaped}';"
+        "Write-Output ('DACL_PROTECTED|'+$a.AreAccessRulesProtected);"
         "$a.Access|%{$s=$_.IdentityReference.Translate("
         "[System.Security.Principal.SecurityIdentifier]).Value;"
         "Write-Output ($s+'|'+$_.AccessControlType+'|'+$_.IsInherited)}"
@@ -227,12 +229,19 @@ def _verify_windows_private_acl(path: Path, sid: str) -> None:
         text=True,
         env=environment,
     )
-    rules = [line.split("|") for line in completed.stdout.splitlines() if line]
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    protected = bool(lines) and lines[0] == "DACL_PROTECTED|True"
+    rules = [line.split("|") for line in lines[1:]]
+    trusted_sids = {sid, "S-1-5-18", "S-1-5-32-544"}
+    allowed_sids = {rule[0] for rule in rules if len(rule) == 3 and rule[1] == "Allow"}
     if (
         completed.returncode != 0
+        or bool(completed.stderr.strip())
+        or not protected
         or not rules
         or any(len(rule) != 3 or rule[2] != "False" for rule in rules)
-        or {rule[0] for rule in rules if rule[1] == "Allow"} != {sid}
+        or sid not in allowed_sids
+        or not allowed_sids.issubset(trusted_sids)
         or any(rule[1] != "Allow" for rule in rules)
     ):
         raise OSError("session token Windows ACL is not private")

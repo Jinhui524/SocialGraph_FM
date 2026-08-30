@@ -32,6 +32,12 @@ def test_tiny_bundle_is_byte_deterministic_and_materializes_with_known_hashes(
     first = create_tiny_contract_bundle(tmp_path / "first.zip")
     second = create_tiny_contract_bundle(tmp_path / "second.zip")
     assert first.read_bytes() == second.read_bytes()
+    with zipfile.ZipFile(first) as outer:
+        assert all(info.create_system == 0 for info in outer.infolist())
+        features_path = tmp_path / "features.npz"
+        features_path.write_bytes(outer.read("features.npz"))
+    with zipfile.ZipFile(features_path) as features:
+        assert all(info.create_system == 0 for info in features.infolist())
     root = tmp_path / "runtime"
     _install_bundle(root, first)
 

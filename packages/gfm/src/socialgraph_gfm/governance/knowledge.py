@@ -121,10 +121,12 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
 
 
 def _normalize_source(path: Path) -> tuple[bytes, str]:
-    resolved = path.expanduser().resolve(strict=True)
+    requested = path.expanduser()
+    if requested.is_symlink() or requested.is_junction():
+        raise ValueError("knowledge source must be an explicit .md, .txt, or .json file")
+    resolved = requested.resolve(strict=True)
     if (
-        resolved.is_symlink()
-        or not resolved.is_file()
+        not resolved.is_file()
         or resolved.suffix.lower() not in _ALLOWED_SUFFIXES
         or not 1 <= resolved.stat().st_size <= _MAX_SOURCE_BYTES
     ):

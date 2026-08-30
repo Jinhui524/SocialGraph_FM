@@ -1660,6 +1660,7 @@ def test_persisted_high_water_reread_failure_keeps_generation_for_exact_retry(
     verified = _sealed_transaction_smoke(stage, accepted, fixtures)
     live_root = tmp_path / "live"
     control = _empty_control(live_root)
+    original_control_bytes = control.path.read_bytes()
     original_read = serving_control_module.read_confined_snapshot
     failed = False
     before_handles: int | None = None
@@ -1814,8 +1815,17 @@ def test_persisted_high_water_reread_failure_keeps_generation_for_exact_retry(
     assert high_water.control_hash == uncertain.document.control_hash
     assert high_water.registry_hash == uncertain.registry_hash
     assert high_water.catalog_hash == uncertain.catalog_hash
-    assert not tuple(live_root.glob(f".{control.path.name}.*.swap"))
-    assert not control.path.with_name(f".{control.path.name}.promotion.lock").exists()
+    retained_swaps = tuple(live_root.glob(f".{control.path.name}.*.swap"))
+    promotion_lock = control.path.with_name(f".{control.path.name}.promotion.lock")
+    if os.name == "nt":
+        assert not retained_swaps
+        assert not promotion_lock.exists()
+    else:
+        # renameat2 exchange leaves the exact predecessor under the random swap
+        # name, and flock deliberately retains its stable lock inode.
+        assert len(retained_swaps) == 1
+        assert retained_swaps[0].read_bytes() == original_control_bytes
+        assert promotion_lock.is_file() and not promotion_lock.is_symlink()
     if handle_count is not None:
         assert handle_count() == before_handles
 
@@ -2150,6 +2160,13 @@ def _create_directory_link(link: Path, target: Path) -> None:
     link.symlink_to(target, target_is_directory=True)
 
 
+def _remove_directory_link(link: Path) -> None:
+    if os.name == "nt":
+        os.rmdir(link)
+    else:
+        link.unlink()
+
+
 def test_promotion_immutable_publication_never_commits_through_replaced_ancestor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2173,7 +2190,7 @@ def test_promotion_immutable_publication_never_commits_through_replaced_ancestor
 
     assert not (outside / target.name).exists()
     if linked:
-        os.rmdir(target.parent)
+        _remove_directory_link(target.parent)
 
 
 def test_promotion_existing_exact_artifact_is_rechecked_after_directory_flush(

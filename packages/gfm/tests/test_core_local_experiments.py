@@ -1320,6 +1320,16 @@ def test_exact_artifacts_without_recovery_ownership_are_never_adopted(
     artifacts = output.with_suffix(".artifacts")
     internal_before = (artifacts / "report.json").read_bytes()
     output.unlink()
+    if os.name != "nt":
+        # POSIX cannot safely unlink these names through a held descriptor, so
+        # successful publication retains them as recovery evidence. Remove the
+        # controlled test fixtures explicitly to model genuinely unowned artifacts.
+        retained_controls = tuple(runtime.glob(".*.local-experiment.lock")) + tuple(
+            runtime.glob(".*.recovery-journal.json")
+        )
+        assert len(retained_controls) == 2
+        for retained_control in retained_controls:
+            retained_control.unlink()
     assert not tuple(runtime.glob(".*.local-experiment.lock"))
     assert not tuple(runtime.glob(".*.recovery-journal.json"))
 

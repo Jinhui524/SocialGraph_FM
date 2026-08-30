@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import socialgraph_gfm.core.inference_service as inference_service
 from socialgraph_gfm.canonical import canonical_sha256
 from socialgraph_gfm.core.artifact_catalog import ArtifactCatalog
 from socialgraph_gfm.core.bundle import CoreGraphBundle
@@ -23,6 +24,65 @@ from _core_inference_test_support import (
     _serving_registry,
     _wait_terminal,
 )
+
+
+def _mock_acl_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: str,
+    *,
+    returncode: int = 0,
+    stderr: str = "",
+) -> None:
+    def run(*args, **kwargs) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args[0], returncode=returncode, stdout=stdout, stderr=stderr
+        )
+
+    monkeypatch.setattr(inference_service.subprocess, "run", run)
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        "S-1-5-21-1000|Allow|False",
+        "\n".join(
+            (
+                "S-1-5-21-1000|Allow|False",
+                "S-1-5-18|Allow|False",
+                "S-1-5-32-544|Allow|False",
+            )
+        ),
+    ],
+)
+def test_windows_private_acl_accepts_only_explicit_trusted_principals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rules: str
+) -> None:
+    _mock_acl_probe(monkeypatch, f"DACL_PROTECTED|True\n{rules}\n")
+
+    inference_service._verify_windows_private_acl(
+        tmp_path / "session.token", "S-1-5-21-1000"
+    )
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "DACL_PROTECTED|False\nS-1-5-21-1000|Allow|False\n",
+        "DACL_PROTECTED|True\nS-1-5-21-1000|Allow|True\n",
+        "DACL_PROTECTED|True\nS-1-5-21-1000|Deny|False\n",
+        "DACL_PROTECTED|True\nS-1-5-21-1000|Allow|False\nS-1-5-11|Allow|False\n",
+        "DACL_PROTECTED|True\nS-1-5-18|Allow|False\n",
+    ],
+)
+def test_windows_private_acl_rejects_unprotected_or_untrusted_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    _mock_acl_probe(monkeypatch, stdout)
+
+    with pytest.raises(OSError, match="Windows ACL is not private"):
+        inference_service._verify_windows_private_acl(
+            tmp_path / "session.token", "S-1-5-21-1000"
+        )
 
 
 def test_risk_serving_manifest_rejects_negative_class_output_index() -> None:
@@ -332,10 +392,12 @@ def test_windows_token_temp_has_verified_private_sid_dacl_before_publication(
         )
         return completed.stdout.strip()
 
-    def rules(path: Path) -> list[tuple[str, str, str]]:
+    def acl(path: Path) -> tuple[bool, list[tuple[str, str, str]]]:
         escaped = str(path).replace("'", "''")
         script = (
+            "$ErrorActionPreference='Stop';"
             f"$a=Get-Acl -LiteralPath '{escaped}';"
+            "Write-Output ('DACL_PROTECTED|'+$a.AreAccessRulesProtected);"
             "$a.Access|%{$s=$_.IdentityReference.Translate("
             "[System.Security.Principal.SecurityIdentifier]).Value;"
             "Write-Output ($s+'|'+$_.AccessControlType+'|'+$_.IsInherited)}"
@@ -352,7 +414,9 @@ def test_windows_token_temp_has_verified_private_sid_dacl_before_publication(
             text=True,
             env=environment,
         )
-        return [tuple(line.split("|")) for line in completed.stdout.splitlines() if line]
+        lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+        protected = bool(lines) and lines[0] == "DACL_PROTECTED|True"
+        return protected, [tuple(line.split("|")) for line in lines[1:]]
 
     original_replace = os.replace
     inspected = False
@@ -361,11 +425,15 @@ def test_windows_token_temp_has_verified_private_sid_dacl_before_publication(
         nonlocal inspected
         source_path = Path(source)
         if source_path.name.endswith(".tmp"):
-            observed = rules(source_path)
+            protected, observed = acl(source_path)
+            assert protected is True
             assert observed
+            assert all(kind == "Allow" for _, kind, _ in observed)
             assert all(inherited == "False" for _, _, inherited in observed)
             allowed = {identity for identity, kind, _ in observed if kind == "Allow"}
-            assert allowed == {sid()}
+            current_sid = sid()
+            assert current_sid in allowed
+            assert allowed.issubset({current_sid, "S-1-5-18", "S-1-5-32-544"})
             inspected = True
         original_replace(source, destination)
 
@@ -373,7 +441,15 @@ def test_windows_token_temp_has_verified_private_sid_dacl_before_publication(
     token_path = tmp_path / "session.token"
     atomic_publish_session_token(token_path)
     assert inspected is True
-    destination_rules = rules(token_path)
-    assert {identity for identity, kind, _ in destination_rules if kind == "Allow"} == {sid()}
+    destination_protected, destination_rules = acl(token_path)
+    assert destination_protected is True
+    assert all(kind == "Allow" for _, kind, _ in destination_rules)
+    assert all(inherited == "False" for _, _, inherited in destination_rules)
+    destination_allowed = {
+        identity for identity, kind, _ in destination_rules if kind == "Allow"
+    }
+    current_sid = sid()
+    assert current_sid in destination_allowed
+    assert destination_allowed.issubset({current_sid, "S-1-5-18", "S-1-5-32-544"})
     token_path.unlink()
     assert not token_path.exists()
