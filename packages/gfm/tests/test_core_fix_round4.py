@@ -1020,6 +1020,76 @@ def _rewrite_run_as_historical(runtime_root: Path, run_id: str, historical_forma
         _write_hashed_document(marker_path, marker, "markerHash")
 
 
+def test_status_read_holds_the_transition_lock_through_its_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog, reference, _ = _catalog(tmp_path)
+    registry = _serving_registry(tmp_path, catalog=catalog)
+    control = _control(tmp_path, registry, catalog)
+    executor_entered = threading.Event()
+    release_executor = threading.Event()
+
+    def gated_executor(*_args: object) -> list[GovernanceFinding]:
+        executor_entered.set()
+        assert release_executor.wait(5)
+        return []
+
+    store = _make_test_only_run_store(
+        tmp_path / "serialized-status-read",
+        registry=registry,
+        artifact_catalog=catalog,
+        serving_control=control,
+        executor=gated_executor,
+    )
+    receipt = store.create(_make_test_internal_create_request(reference, control))
+    run_id = receipt.status.run_id
+    assert executor_entered.wait(5)
+
+    reader_entered = threading.Event()
+    release_reader = threading.Event()
+    reader_errors: list[BaseException] = []
+    observed: list[GfmRunStatus] = []
+    original_load_core = store._load_core
+
+    def blocking_load_core(target_run_id: str):
+        if threading.current_thread().name == "gfm-status-reader":
+            reader_entered.set()
+            assert release_reader.wait(5)
+        return original_load_core(target_run_id)
+
+    monkeypatch.setattr(store, "_load_core", blocking_load_core)
+
+    def read_status() -> None:
+        try:
+            observed.append(store.get(run_id))
+        except BaseException as error:  # thread failure is asserted below
+            reader_errors.append(error)
+
+    reader = threading.Thread(target=read_status, name="gfm-status-reader")
+    acquired_transition_lock = False
+    try:
+        reader.start()
+        assert reader_entered.wait(5)
+        acquired_transition_lock = store._lock.acquire(blocking=False)
+        if acquired_transition_lock:
+            store._lock.release()
+    finally:
+        release_reader.set()
+        reader.join(timeout=5)
+        release_executor.set()
+
+    assert not reader.is_alive()
+    assert not reader_errors
+    assert observed and observed[0].status == "running"
+    assert acquired_transition_lock is False
+
+    deadline = time.monotonic() + 5
+    while store.get(run_id).status not in {"succeeded", "failed"}:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    assert store.get(run_id).status == "succeeded"
+
+
 @pytest.mark.parametrize(
     "field",
     [

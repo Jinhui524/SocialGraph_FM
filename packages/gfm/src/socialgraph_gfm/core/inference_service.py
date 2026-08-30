@@ -781,11 +781,12 @@ class RunStore:
                 pass
 
     def get(self, run_id: str) -> GfmRunStatus:
-        run_dir = self._run_dir(run_id)
-        if not (run_dir / "state.json").is_file():
-            raise LookupError("run not found")
-        _, status, _ = self._load_core(run_id)
-        return status
+        with self._lock:
+            run_dir = self._run_dir(run_id)
+            if not (run_dir / "state.json").is_file():
+                raise LookupError("run not found")
+            _, status, _ = self._load_core(run_id)
+            return status
 
     def get_result(self, run_id: str) -> GfmRunResult:
         status = self.get(run_id)
