@@ -8,12 +8,17 @@ function Test-SocialGraphPythonLauncher {
     )
 
     try {
+        # Windows PowerShell 5.1 serializes multiline and quote-heavy native
+        # arguments differently from PowerShell 7.  Keep the -c bootstrap free
+        # of quotes and carry the real probe as an opaque Base64 argv value so
+        # both hosts execute exactly the same Python source.
+        $probeSource = 'import json,sys;print(json.dumps({"executable":sys.executable,"version":list(sys.version_info[:3])}))'
+        $probePayload = [Convert]::ToBase64String(
+            [Text.Encoding]::UTF8.GetBytes($probeSource)
+        )
+        $probeBootstrap = 'import base64,sys;exec(base64.b64decode(sys.argv[1]))'
         $probeOutput = @(
-            & $Command @PrefixArguments -I -c @'
-import json
-import sys
-print(json.dumps({"executable": sys.executable, "version": list(sys.version_info[:3])}))
-'@ 2>$null
+            & $Command @PrefixArguments -I -c $probeBootstrap $probePayload 2>$null
         )
         if ($LASTEXITCODE -ne 0 -or $probeOutput.Count -ne 1) {
             return $null

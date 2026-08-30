@@ -23,12 +23,12 @@ from socialgraph_gfm.core.inference_contracts import (
     InternalCreateRunRequest,
 )
 from socialgraph_gfm.core.inference_service import RunStore, ServingControlStaleError
-from tests.test_core_inference_fix_round1 import (
+from _core_inference_test_support import (
     _catalog,
+    _make_test_internal_create_request,
     _serving_registry,
     _wait_terminal,
 )
-from _core_inference_test_support import _make_test_internal_create_request
 
 
 def _publish_control(

@@ -25,7 +25,7 @@ def test_package_readiness_is_the_current_core_machine_truth() -> None:
     assert readiness.gates.core_serving_ready.ready is False
 
 
-def test_public_documentation_is_one_english_reference_plus_machine_readiness() -> None:
+def test_public_documentation_has_bilingual_readmes_and_one_english_reference() -> None:
     docs_root = REPOSITORY / "docs"
     expected_files = {"REFERENCE.md", "status/readiness.json"}
     actual_files = {
@@ -40,8 +40,12 @@ def test_public_documentation_is_one_english_reference_plus_machine_readiness() 
     assert (docs_root / "status" / "readiness.json").read_bytes() == (
         REPOSITORY / "packages" / "gfm" / "contracts" / "core-readiness.json"
     ).read_bytes()
-    assert (REPOSITORY / "README.md").is_file()
-    assert not (REPOSITORY / "README.zh-CN.md").exists()
+    english_readme = REPOSITORY / "README.md"
+    chinese_readme = REPOSITORY / "README.zh-CN.md"
+    assert english_readme.is_file()
+    assert chinese_readme.is_file()
+    assert "README.zh-CN.md" in english_readme.read_text(encoding="utf-8")
+    assert "README.md" in chinese_readme.read_text(encoding="utf-8")
 
 
 def test_removed_knowledge_source_handoff_and_history_documents_stay_absent() -> None:

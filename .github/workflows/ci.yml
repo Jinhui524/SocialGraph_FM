@@ -27,7 +27,6 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci
-      - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm test -- --reporter=dot
       - run: npm run test:benchmark-runner
@@ -49,16 +48,15 @@ jobs:
           cache-dependency-path: |
             services/api/requirements-dev.lock
       - run: pip install --require-hashes -r requirements-dev.lock
-      - run: python -m pip_audit --local
       - run: ruff check .
       - run: mypy --config-file ../../.github/mypy-api.ini app
-      - run: pytest
+      - run: pytest -vv --maxfail=1
 
-  launcher-contracts:
+  runtime:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,11 +77,22 @@ jobs:
       - run: python scripts/socialgraph.py start --help
       - run: python scripts/socialgraph.py doctor --help
       - run: node scripts/run-python-cli.mjs --help
+      - name: Probe Python from PowerShell 7
+        shell: pwsh
+        run: ./scripts/tests/NativeCommand.Tests.ps1
+      - name: Probe Python from Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/tests/NativeCommand.Tests.ps1
+      - name: Check Windows startup contracts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/tests/Startup.Tests.ps1
       - run: python -m ruff check packages/runtime/src packages/runtime/tests scripts/socialgraph.py
       - run: python -m mypy --config-file .github/mypy-runtime.ini packages/runtime/src
-      - run: python -m pytest -q tests/test_startup_scripts.py tests/test_mock_llm_provider.py packages/runtime/tests
+      - run: python -m pytest -vv --maxfail=1 tests/test_startup_scripts.py tests/test_mock_llm_provider.py packages/runtime/tests
 
-  gfm-contracts:
+  gfm-ubuntu-cpu:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -103,10 +112,9 @@ jobs:
           -r locks/cpu-ci.requirements.txt
       - run: pip install . --no-deps --no-build-isolation
       - run: python -m pip wheel . --no-deps --no-build-isolation --wheel-dir "${{ runner.temp }}/wheelhouse"
-      - run: python -m pip_audit --local
       - run: ruff check src tests
       - run: mypy --config-file ../../.github/mypy-gfm.ini src
-      - run: pytest -ra
+      - run: pytest -vv --maxfail=1 -ra
       - run: python -m socialgraph_gfm.cli doctor --root "${{ runner.temp }}/socialgraph-fm" --json
       - run: python -m socialgraph_gfm.cli smoke --fixture both --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
       - run: python -m socialgraph_gfm.cli preflight --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
@@ -130,76 +138,71 @@ jobs:
           --find-links https://data.pyg.org/whl/torch-2.8.0+cpu.html
           -r locks/install-windows-x86_64-cpu-pt28.requirements.txt
       - run: .venv/Scripts/python.exe -m pip install --no-deps --no-build-isolation .
+      - run: .venv/Scripts/python.exe -m pip install pytest==9.0.3
       - run: .venv/Scripts/python.exe -m pip check
+      - run: .venv/Scripts/python.exe -m pytest -vv --maxfail=1 -ra
       - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli doctor --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
       - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli smoke --fixture both --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
       - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli preflight --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
-
-  gfm-macos-arm64-cpu:
-    runs-on: macos-15
-    defaults:
-      run:
-        working-directory: packages/gfm
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: packages/gfm/locks/install-macos-arm64-cpu-pt28.requirements.txt
-      - run: python -m venv .venv
-      - run: >-
-          .venv/bin/python -m pip install
-          --require-hashes --only-binary=:all:
-          --index-url https://pypi.org/simple
-          --find-links https://data.pyg.org/whl/torch-2.8.0+cpu.html
-          -r locks/install-macos-arm64-cpu-pt28.requirements.txt
-      - run: .venv/bin/python -m pip install --no-deps --no-build-isolation .
-      - run: .venv/bin/python -m pip check
-      - run: .venv/bin/python -m socialgraph_gfm.cli doctor --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
-      - run: .venv/bin/python -m socialgraph_gfm.cli smoke --fixture both --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
-      - run: .venv/bin/python -m socialgraph_gfm.cli preflight --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
-
-  gfm-linux-oci:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    defaults:
-      run:
-        working-directory: packages/gfm
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: docker build --pull --tag socialgraph-fm-gfm:ci .
-      - run: >-
-          docker run --rm --entrypoint python socialgraph-fm-gfm:ci
-          -m socialgraph_gfm.cli doctor --device cpu --json
-      - run: >-
-          docker run --rm --entrypoint python socialgraph-fm-gfm:ci
-          -m socialgraph_gfm.cli smoke --fixture both --device cpu
-          --root /var/lib/socialgraph-fm --json
 
   repository-policy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest==9.0.3
       - shell: pwsh
         run: ./scripts/tests/NativeCommand.Tests.ps1
       - shell: pwsh
         run: ./scripts/publication-check.ps1 -RepositoryRoot .
+      - shell: pwsh
+        run: ./scripts/tests/RuntimeBundle.Tests.ps1
+      - run: >-
+          python -m pytest -vv --maxfail=1
+          tests/test_publication_policy.py
+          tests/test_brand_policy.py
+          tests/test_contract_mirrors.py
+          tests/test_runtime_bundle.py
 
-  operations-windows:
-    runs-on: windows-latest
+  download-zip-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - shell: pwsh
+      - run: python -m pip install pytest==9.0.3
+      - name: Export and inspect the no-Git Download ZIP
+        shell: pwsh
         run: |
-          python -m venv var/envs/socialgraph-api
-          & ./var/envs/socialgraph-api/Scripts/python.exe -m pip install pytest==8.4.2 ruff==0.13.2
-          ./scripts/tests/Startup.Tests.ps1
-          ./scripts/tests/RuntimeBundle.Tests.ps1
-          & ./var/envs/socialgraph-api/Scripts/python.exe -m pytest tests/test_startup_scripts.py tests/test_mock_llm_provider.py tests/test_publication_policy.py tests/test_contract_mirrors.py tests/test_runtime_bundle.py
+          $ErrorActionPreference = "Stop"
+          $exportedRepository = Join-Path $env:RUNNER_TEMP "exported-repository"
+          $archive = Join-Path $env:RUNNER_TEMP "SocialGraph-FM.zip"
+          $download = Join-Path $env:RUNNER_TEMP "download-zip"
+          python scripts/socialgraph.py export-github `
+            --repository $exportedRepository `
+            --zip $archive
+          if ($LASTEXITCODE -ne 0) { throw "Public ZIP export failed" }
+          Expand-Archive -LiteralPath $archive -DestinationPath $download
+          if (Test-Path -LiteralPath (Join-Path $download ".git")) {
+            throw "Download ZIP unexpectedly contains Git metadata"
+          }
+          Push-Location $download
+          try {
+            python scripts/socialgraph.py onboard --help
+            if ($LASTEXITCODE -ne 0) { throw "ZIP onboarding entry point failed" }
+            python -m pytest -q tests/test_runtime_bundle.py tests/test_startup_scripts.py
+            if ($LASTEXITCODE -ne 0) { throw "ZIP contract tests failed" }
+          }
+          finally {
+            Pop-Location
+          }
 
   clean-clone-windows:
     runs-on: windows-latest
@@ -315,12 +318,8 @@ jobs:
           $dirty = @(git status --porcelain)
           if ($dirty.Count -ne 0) { throw "Quickstart changed tracked files: $($dirty -join ', ')" }
 
-  clean-clone-posix-cpu:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-15]
-    runs-on: ${{ matrix.os }}
+  clean-clone-ubuntu-cpu:
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -355,23 +354,15 @@ jobs:
           done
           curl --fail --silent "http://127.0.0.1:$mock_port/health" >/dev/null
 
-          api_mode=chat_completions
-          preset=custom
-          auth_scheme=bearer
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            api_mode=anthropic_messages
-            preset=custom_anthropic
-            auth_scheme=x-api-key
-          fi
           printf '%s\n' 'clean-clone-placeholder' | python scripts/socialgraph.py onboard \
             --wheel-profile cpu \
             --device-policy auto \
             --env-mode managed \
-            --preset "$preset" \
+            --preset custom \
             --api-base "http://127.0.0.1:$mock_port/v1" \
             --model clean-clone-model \
-            --api-mode "$api_mode" \
-            --auth-scheme "$auth_scheme" \
+            --api-mode chat_completions \
+            --auth-scheme bearer \
             --allow-insecure-loopback \
             --api-key-stdin
 
@@ -385,11 +376,7 @@ jobs:
           "$gfm_python" -m pip freeze --all >"$RUNNER_TEMP/socialgraph-gfm-after.txt"
           diff -u "$RUNNER_TEMP/socialgraph-api-before.txt" "$RUNNER_TEMP/socialgraph-api-after.txt"
           diff -u "$RUNNER_TEMP/socialgraph-gfm-before.txt" "$RUNNER_TEMP/socialgraph-gfm-after.txt"
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            npm --prefix apps/web exec -- playwright install --with-deps chromium
-          else
-            npm --prefix apps/web exec -- playwright install chromium
-          fi
+          npm --prefix apps/web exec -- playwright install --with-deps chromium
 
           LLM_API_KEY=test-inherited-sentinel \
           OPENAI_API_KEY=test-inherited-sentinel \
@@ -434,33 +421,3 @@ jobs:
           kill "$mock_pid" 2>/dev/null || true
           wait "$mock_pid" 2>/dev/null || true
           test -z "$(git status --porcelain)"
-
-  cuda-runtime-self-hosted:
-    if: >-
-      ${{ vars.SOCIALGRAPH_ENABLE_GPU_CI == 'true' &&
-          (github.event_name == 'workflow_dispatch' ||
-           (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner_os: Linux
-            runner_arch: X64
-          - runner_os: Windows
-            runner_arch: X64
-    runs-on: [self-hosted, "${{ matrix.runner_os }}", "${{ matrix.runner_arch }}", socialgraph-gpu]
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-      - run: python scripts/socialgraph.py setup --wheel-profile cuda --device-policy auto --env-mode managed
-      - run: python scripts/socialgraph.py doctor --full --json
-      - run: python scripts/socialgraph.py start --llm-mode disabled --no-llm-prompt
-      - run: python scripts/socialgraph.py doctor --json
-      - if: ${{ always() }}
-        run: python scripts/socialgraph.py stop

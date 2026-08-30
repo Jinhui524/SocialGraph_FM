@@ -37,8 +37,18 @@ Assert-True (-not ($assets.path -match "(^|/)(smoke-report|registry|registry-can
 Assert-True (-not ($assets.path -match "research|/runs/|corpus/countries/(?!russia/)")) `
     "A training run, SocialGraph-FM Research asset, or non-Russia corpus entered the bundle."
 
-$testDrive = [IO.Path]::GetPathRoot($projectRoot)
-$testParent = Join-Path $testDrive "sgfm-tmp"
+$testBase = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+    [IO.Path]::GetFullPath($env:RUNNER_TEMP)
+}
+elseif ($env:OS -eq "Windows_NT") {
+    # Keep deep manifest-bound catalog paths below the traditional Windows
+    # MAX_PATH boundary when this test runs outside GitHub Actions.
+    [IO.Path]::GetPathRoot($projectRoot)
+}
+else {
+    [IO.Path]::GetTempPath()
+}
+$testParent = Join-Path $testBase "sgfm-tmp"
 New-Item -ItemType Directory -Force -Path $testParent | Out-Null
 $testRoot = Join-Path $testParent "bundle-$PID-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
 New-Item -ItemType Directory -Path $testRoot | Out-Null
@@ -113,7 +123,12 @@ try {
 }
 finally {
     $resolved = [IO.Path]::GetFullPath($testRoot)
-    $expectedPrefix = [IO.Path]::GetFullPath($testParent).TrimEnd("\") + "\bundle-"
+    $separators = [char[]]@(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    $expectedPrefix = [IO.Path]::GetFullPath($testParent).TrimEnd($separators) +
+        [IO.Path]::DirectorySeparatorChar + "bundle-"
     if (-not $resolved.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to clean a runtime-bundle test path outside the verified short temp root."
     }

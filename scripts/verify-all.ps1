@@ -4,7 +4,7 @@ param(
     [switch]$SkipE2E
 )
 
-$profile = if ($SkipGfm) { "Offline" } else { "Cuda" }
+$profile = if ($SkipGfm) { "Offline" } else { "Cpu" }
 & (Join-Path $PSScriptRoot "verify.ps1") `
     -Profile $profile `
     -SkipBuild:$SkipBuild `

@@ -1,0 +1,114 @@
+name: release-cuda
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: Commit, tag, or branch to validate
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cuda-windows
+  cancel-in-progress: false
+
+jobs:
+  windows-cuda-13-torch-212:
+    runs-on: [self-hosted, Windows, X64, socialgraph-gpu]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_ref }}
+          clean: true
+          fetch-depth: 0
+      - name: Require a reviewed main-history candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "CUDA release validation accepts only commits already reachable from main"
+          }
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Install the explicit CUDA wheel profile
+        shell: pwsh
+        run: >-
+          python scripts/socialgraph.py setup
+          --wheel-profile cuda
+          --device-policy cuda-required
+          --env-mode managed
+      - name: Run CUDA checkpoint forwards and CPU fallback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $reportRoot = Join-Path $env:RUNNER_TEMP "socialgraph-cuda-release"
+          New-Item -ItemType Directory -Force -Path $reportRoot | Out-Null
+          python scripts/socialgraph.py doctor --full --json |
+            Tee-Object -FilePath (Join-Path $reportRoot "doctor-full.json")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Full CUDA doctor failed with exit code $LASTEXITCODE"
+          }
+          $doctor = Get-Content (Join-Path $reportRoot "doctor-full.json") -Raw |
+            ConvertFrom-Json
+          foreach ($required in @(
+            "global-forward",
+            "protocol-forwards",
+            "global-forward-cpu-fallback",
+            "protocol-forwards-cpu-fallback"
+          )) {
+            $check = @($doctor.checks | Where-Object name -eq $required)
+            if ($check.Count -ne 1 -or -not $check[0].passed) {
+              throw "CUDA release doctor did not pass '$required'"
+            }
+          }
+      - name: Run governance service smoke
+        shell: pwsh
+        env:
+          CANDIDATE_REF: ${{ inputs.candidate_ref }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $reportRoot = Join-Path $env:RUNNER_TEMP "socialgraph-cuda-release"
+          try {
+            python scripts/socialgraph.py start --llm-mode disabled --no-llm-prompt
+            if ($LASTEXITCODE -ne 0) { throw "Runtime startup failed" }
+            $health = Invoke-RestMethod http://127.0.0.1:8000/api/v2/gfm/governance/health
+            $skills = Invoke-RestMethod http://127.0.0.1:8000/api/v2/gfm/governance/skills
+            if (-not $health.servingReady -or $health.device -ne "cuda") {
+              throw "Governance GFM did not become CUDA serving-ready"
+            }
+            if (@($skills.items).Count -ne 8) {
+              throw "Governance Skill catalog did not expose exactly eight Skills"
+            }
+            [ordered]@{
+              schemaVersion = "socialgraph-fm.cuda-release/1.0"
+              candidateRef = $env:CANDIDATE_REF
+              commit = (git rev-parse HEAD).Trim()
+              checkedAtUtc = [DateTime]::UtcNow.ToString("o")
+              governanceHealth = $health
+              skillCatalogHash = $skills.catalogHash
+              skillCount = @($skills.items).Count
+            } | ConvertTo-Json -Depth 20 |
+              Set-Content -LiteralPath (Join-Path $reportRoot "governance-smoke.json") -Encoding utf8
+          }
+          finally {
+            python scripts/socialgraph.py stop
+          }
+      - name: Upload CUDA release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-cuda-release-evidence
+          path: ${{ runner.temp }}/socialgraph-cuda-release/*.json
+          if-no-files-found: error
+          retention-days: 30

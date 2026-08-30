@@ -1,7 +1,8 @@
 # SocialGraph-FM Reference
 
 This document is the complete technical and operational reference for the public
-SocialGraph-FM runtime. The root README remains the quick-start entry point.
+SocialGraph-FM runtime. Use the root [English README](../README.md) or
+[Chinese README](../README.zh-CN.md) as the quick-start entry point.
 
 ## Runtime architecture
 
@@ -22,22 +23,29 @@ each governed run.
 
 ## Supported platforms and wheels
 
-| Platform | CPU wheel | CUDA wheel |
+| Platform | Runtime profile | Release status |
 | --- | --- | --- |
-| Windows x86-64 | PyTorch 2.8 / PyG 2.8 | PyTorch 2.12 / CUDA 13.0 |
-| glibc Linux x86-64 | PyTorch 2.8 / PyG 2.8 | Profile available; real NVIDIA release gate required |
-| macOS 15 Apple silicon | PyTorch 2.8 / PyG 2.8 | Not supported |
+| Windows x86-64 | CPU, PyTorch 2.8 / PyG 2.8 | Required CI path |
+| Windows x86-64 with NVIDIA GPU | CUDA 13.0, PyTorch 2.12 / PyG 2.8 | Real release validation on a temporary self-hosted GPU runner |
+| Ubuntu glibc x86-64 | CPU, PyTorch 2.8 / PyG 2.8 | Required CI path |
+| macOS ARM64 | CPU, PyTorch 2.8 / PyG 2.8 | Best-effort, non-blocking diagnostics |
 
 The install catalog is `packages/gfm/install-profiles.json`. It fixes Python, platform,
 architecture, PyTorch, PyG, extension wheels, package indexes, and hash-locked
-requirements. Arbitrary wheel URLs and silent source builds are rejected. CUDA requires
-a matching wheel backend and driver; a local CUDA Toolkit or `nvcc` is not required.
+requirements. Arbitrary wheel URLs and silent source builds are rejected. The default
+wheel profile is CPU; CUDA installation requires explicit `--wheel-profile cuda`.
+Wheel selection and execution device policy are independent. CUDA requires a matching
+wheel backend and driver; a local CUDA Toolkit or `nvcc` is not required.
+
+Linux CUDA profile metadata is retained for reproducibility, but Linux CUDA is not a
+current release commitment. Intel macOS, MPS, ROCm, musl, ARM Linux/Windows, and other
+architectures are also outside the supported matrix.
 
 ### Environment selection
 
 ```console
 python scripts/socialgraph.py setup \
-  --wheel-profile auto|cpu|cuda|PROFILE_ID \
+  --wheel-profile cpu|cuda|PROFILE_ID \
   --device-policy auto|cpu|cuda-required \
   --env-mode auto|reuse|managed
 ```
@@ -73,10 +81,11 @@ device = requested_device or torch.device(
 )
 ```
 
-A CPU wheel always resolves to CPU. A CUDA wheel resolves to CUDA when availability,
-tensor operations, and a real model forward pass; otherwise `auto` uses the verified
-CPU fallback. If CUDA is detected but the real CUDA forward fails, setup and startup
-fail closed. `cuda-required` rejects a missing or unusable GPU.
+A CPU wheel always resolves to CPU. A CUDA wheel resolves to CUDA only after CUDA
+availability, tensor operations, and a real model forward all succeed; otherwise
+`auto` uses the verified CPU fallback when CUDA is unavailable. If CUDA is detected but
+the real CUDA forward fails, setup and startup fail closed. `cuda-required` rejects a
+missing or unusable GPU.
 
 Dynamic GPU state is not part of the software fingerprint. Each service start resolves
 the device again and records an execution-environment hash; a running process never
@@ -187,6 +196,19 @@ review or report state.
 
 Core Skills under `skills/core/` have a separate namespace and are never merged into the
 Governance catalog. These are product contracts, not agent configuration files.
+Names, parameter Schemas, API routes, implementation mapping, provenance hashes,
+confirmation behavior, and per-Skill failure boundaries are listed in the
+[Skills reference](../skills/README.md) and
+[Chinese Skills reference](../skills/README.zh-CN.md).
+
+## Experimental Core readiness
+
+`docs/status/readiness.json` mirrors the machine record for the experimental
+SocialGraph-FM Core milestone. Its gates describe formal Core corpus evidence, model
+acceptance, accepted-candidate evidence, and an independent Core serving smoke. A false
+gate means that the corresponding experimental Core research artifact has not been
+installed; it does not mean that the complete Governance user runtime, Global model,
+four-protocol comparison, or reviewed-case workflow is unavailable.
 
 ## Public and internal APIs
 
@@ -238,16 +260,35 @@ bounded KILL. Stop refuses to terminate a reused PID whose identity no longer ma
 
 ## Development and release checks
 
-The repository CI builds platform-independent Runtime, API, and GFM wheels and runs:
+Required CI is intentionally limited to repository policy, Web on Ubuntu, API on
+Ubuntu, Runtime on Windows/Ubuntu, GFM CPU on Windows/Ubuntu, and CPU onboarding from a
+clean clone on Windows/Ubuntu. macOS ARM64 lifecycle diagnostics are a separate
+best-effort workflow. Dependency audits run as scheduled or manual reports and do not
+make the main correctness workflow fail.
 
-- Runtime, API, and GFM pytest, Ruff, and mypy suites
-- Web typecheck, unit tests, production build, and Playwright
-- 96-route and Skill contract parity
-- recursive brand, secret, personal-path, binary, license, and Markdown-link scans
-- CPU managed/reuse clean-clone gates on Windows, Linux, and macOS
-- real CUDA model gates on configured NVIDIA runners
-- Russia 01–04, target adaptation, retrieval, review, report, and LLM-assisted E2E
+Run the relevant local checks before publication:
 
-Common local commands are documented in `CONTRIBUTING.md`. Publication artifacts are
-created through `python scripts/socialgraph.py export-github`; the tool produces a clean
-one-commit repository and a ZIP containing the same tracked bytes without `.git`.
+```console
+python -m pytest tests/test_publication_policy.py
+python -m pytest packages/runtime/tests
+python -m pytest services/api/tests
+python -m pytest packages/gfm/tests
+npm --prefix apps/web run typecheck
+npm --prefix apps/web test -- --run
+npm --prefix apps/web run build
+npm --prefix apps/web run test:e2e:offline
+```
+
+API and GFM checks must use separate development environments so the API remains
+Torch-free. Contract changes require catalog/API/GFM/Web parity tests and regenerated
+checked artifacts. Documentation changes require valid relative links and a
+deterministic rebuild of the Governance knowledge index and runtime manifest.
+
+Windows CUDA is a release gate, not a permanent daily runner. For a release candidate,
+bring the self-hosted GPU runner online, run full doctor diagnostics, a real checkpoint
+forward, CPU fallback, and Governance smoke, and retain the JSON report. Daily CI checks
+only the CUDA lock/profile contract.
+
+Publication artifacts are created through
+`python scripts/socialgraph.py export-github`; the tool produces a clean repository and
+a ZIP containing the same tracked bytes without `.git`.

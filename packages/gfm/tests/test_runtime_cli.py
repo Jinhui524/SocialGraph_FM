@@ -1,5 +1,7 @@
 import json
+import os
 import platform
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,32 @@ from socialgraph_gfm.errors import RunCancelled
 from socialgraph_gfm.preflight import preflight_report
 from socialgraph_gfm.runtime import RunContext, runtime_report
 import socialgraph_gfm.runtime as runtime_module
+
+
+def test_preflight_root_writability_uses_nearest_existing_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socialgraph_gfm.preflight as preflight
+
+    existing_parent = tmp_path / "user-writable-runtime-parent"
+    existing_parent.mkdir()
+    requested_root = existing_parent / "not-created" / "gfm"
+    checked: list[Path] = []
+
+    def fake_access(path: str | os.PathLike[str], mode: int) -> bool:
+        checked.append(Path(path))
+        assert mode == os.W_OK
+        return Path(path) == existing_parent
+
+    monkeypatch.setattr(preflight.os, "access", fake_access)
+
+    report = preflight._root_report(requested_root)
+
+    assert report["path"] == str(requested_root)
+    assert report["anchor"] == str(existing_parent)
+    assert report["anchorExists"] is True
+    assert report["anchorWritable"] is True
+    assert checked == [existing_parent]
 
 
 def test_doctor_is_machine_readable_and_runtime_status_is_honest(capsys, tmp_path):

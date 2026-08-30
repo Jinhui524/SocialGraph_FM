@@ -804,7 +804,10 @@ def configure_environment(
         if not _ANTHROPIC_VERSION.fullmatch(resolved_anthropic_version):
             raise ValueError("anthropic-version must use YYYY-MM-DD")
     if api_key_stdin:
-        key = stdin.readline().rstrip("\r\n")
+        # Windows PowerShell 5.1 prefixes native-pipeline UTF-8 input with a
+        # decoded BOM.  Accept only that leading transport marker; the secret
+        # remains stdin-only and is otherwise preserved byte-for-character.
+        key = stdin.readline().lstrip("\ufeff").rstrip("\r\n")
     elif interactive:
         key = getpass.getpass("API Key: ")
     else:

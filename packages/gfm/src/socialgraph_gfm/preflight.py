@@ -39,14 +39,19 @@ _NEWCOMER_TASK = "core.newcomer_support"
 
 
 def _root_report(root: Path) -> dict[str, Any]:
-    anchor = root.anchor or str(root)
-    anchor_path = Path(anchor)
-    exists = anchor_path.exists()
+    # The runtime root is commonly created after preflight.  Probe that exact
+    # directory when it exists, otherwise the nearest existing parent where it
+    # would be created.  Checking only the filesystem anchor ("/" on POSIX)
+    # incorrectly reports ordinary non-root macOS/Linux users as unwritable.
+    probe_path = root
+    while not probe_path.exists() and probe_path.parent != probe_path:
+        probe_path = probe_path.parent
+    exists = probe_path.is_dir()
     return {
         "path": str(root),
-        "anchor": anchor,
+        "anchor": str(probe_path),
         "anchorExists": exists,
-        "anchorWritable": exists and os.access(anchor_path, os.W_OK),
+        "anchorWritable": exists and os.access(probe_path, os.W_OK),
     }
 
 

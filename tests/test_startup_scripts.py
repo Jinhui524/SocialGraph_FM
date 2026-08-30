@@ -249,7 +249,7 @@ Path(os.environ[\"SOCIALGRAPH_WRAPPER_CAPTURE\"]).write_text(
         check=True,
     )
     configured = json.loads(capture.read_text(encoding="utf-8"))
-    assert configured["stdin"].rstrip("\r\n") == "wrapper-placeholder-key"
+    assert configured["stdin"].lstrip("\ufeff").rstrip("\r\n") == "wrapper-placeholder-key"
     assert "wrapper-placeholder-key" not in configured["argv"]
     assert configured["argv"] == [
         "configure-llm",
@@ -498,6 +498,8 @@ def test_public_runtime_bundle_is_hash_bound_and_machine_derived_files_are_exclu
 
 def test_github_ci_uses_current_runtime_paths_and_explicit_gfm_roots() -> None:
     workflow = _read(".github/workflows/ci.yml")
+    macos = _read(".github/workflows/compatibility-macos.yml")
+    cuda = _read(".github/workflows/release-cuda.yml")
     assert "var/config/core-api.env" not in workflow
     assert "registry/socialgraph-fm.json" not in workflow
     assert "var/config/socialgraph-api.env" in workflow
@@ -505,7 +507,8 @@ def test_github_ci_uses_current_runtime_paths_and_explicit_gfm_roots() -> None:
     assert "--config-file .github/mypy-runtime.ini" in workflow
     assert "--config-file ../../.github/mypy-api.ini" in workflow
     assert "--config-file ../../.github/mypy-gfm.ini" in workflow
-    assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in workflow
+    assert "macos-15" not in workflow
+    assert "self-hosted" not in workflow
     assert (
         'python -m socialgraph_gfm.cli doctor --root "${{ runner.temp }}/socialgraph-fm"'
         in workflow
@@ -516,8 +519,12 @@ def test_github_ci_uses_current_runtime_paths_and_explicit_gfm_roots() -> None:
     )
     assert (
         '.venv/bin/python -m socialgraph_gfm.cli doctor --device cpu --root "${{ runner.temp }}/socialgraph-fm"'
-        in workflow
+        in macos
     )
+    assert "runs-on: [self-hosted, Windows, X64, socialgraph-gpu]" in cuda
+    assert "--wheel-profile cuda" in cuda
+    assert "--device-policy cuda-required" in cuda
+    assert "git merge-base --is-ancestor HEAD origin/main" in cuda
 
 
 def test_startup_powershell_behavior() -> None:

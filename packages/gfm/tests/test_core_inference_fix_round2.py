@@ -19,16 +19,14 @@ from socialgraph_gfm.core.inference_contracts import (
     InternalCreateRunRequest,
 )
 from socialgraph_gfm.core.inference_service import RunStore
-from tests.test_core_inference_fix_round1 import (
+from _core_inference_test_support import (
     _catalog,
+    _make_test_internal_create_request,
+    _make_test_serving_control,
     _serving_registry,
     _wait_terminal,
     FEATURE_DESCRIPTOR,
     HASHES,
-)
-from _core_inference_test_support import (
-    _make_test_internal_create_request,
-    _make_test_serving_control,
 )
 
 

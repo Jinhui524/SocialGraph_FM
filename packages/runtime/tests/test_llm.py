@@ -121,6 +121,22 @@ def test_api_key_stdin_reads_one_complete_line() -> None:
     assert environment["LLM_API_KEY"] == "complete-key-value"
 
 
+def test_api_key_stdin_removes_the_windows_powershell_transport_bom() -> None:
+    presets = Path(__file__).resolve().parents[3] / "scripts" / "config" / "llm-presets.json"
+    environment = llm.configure_environment(
+        preset_catalog=presets,
+        preset="custom",
+        api_base="https://provider.example/v1",
+        model="model",
+        api_mode="chat_completions",
+        timeout_seconds=15,
+        api_key_stdin=True,
+        allow_insecure_loopback=False,
+        stdin=io.StringIO("\ufeffcomplete-key-value\n"),
+    )
+    assert environment["LLM_API_KEY"] == "complete-key-value"
+
+
 @pytest.mark.parametrize(
     ("preset", "api_base", "api_mode"),
     [
