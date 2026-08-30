@@ -173,6 +173,14 @@ def atomic_publish_session_token(path: str | Path) -> str:
             sid = sid_result.stdout.strip()
             if sid_result.returncode != 0 or not sid.startswith("S-"):
                 raise OSError("failed to resolve current Windows SID")
+            reset = subprocess.run(
+                ["icacls", str(temporary), "/reset"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if reset.returncode != 0:
+                raise OSError("failed to reset Windows ACL on session token")
             completed = subprocess.run(
                 [
                     "icacls",
@@ -180,6 +188,8 @@ def atomic_publish_session_token(path: str | Path) -> str:
                     "/inheritance:r",
                     "/grant:r",
                     f"*{sid}:(M)",
+                    "*S-1-5-18:(M)",
+                    "*S-1-5-32-544:(M)",
                 ],
                 check=False,
                 stdout=subprocess.DEVNULL,

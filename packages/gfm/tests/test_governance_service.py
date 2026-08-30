@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 import zipfile
 from pathlib import Path
@@ -456,6 +457,7 @@ def test_run_listing_skips_legacy_states_without_model_identity(
         runtime.close()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows sharing retry contract")
 def test_state_reads_retry_transient_windows_sharing_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

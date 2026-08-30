@@ -339,10 +339,8 @@ def test_research_heads_keep_email_symmetric_and_wiki_ordered() -> None:
     encoded[0, 0] = 2.0
     encoded[1, 0] = 1.0
     pairs = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
-    assert torch.equal(
-        model.collaboration_head(encoded, pairs)[:1],
-        model.collaboration_head(encoded, pairs)[1:],
-    )
+    collaboration = model.collaboration_head(encoded, pairs)
+    assert torch.equal(collaboration[:1], collaboration[1:])
     with torch.no_grad():
         first = model.signed_edge_head.network[0]
         last = model.signed_edge_head.network[2]
