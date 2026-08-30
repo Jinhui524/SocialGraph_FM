@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import os
 from pathlib import Path
 from typing import Any, Callable, cast
 
@@ -521,7 +522,7 @@ def test_ledger_is_immutable_exact_replay_and_resource_failures_are_preserved(
     assert "metric-inventory" in partial.failed_gates
 
 
-def test_ledger_precommit_failure_never_publishes_partial_record(
+def test_ledger_precommit_failure_never_publishes_partial_record_and_confines_orphans(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     protocol = ExperimentProtocol.fixed()
@@ -537,7 +538,17 @@ def test_ledger_precommit_failure_never_publishes_partial_record(
     with pytest.raises(OSError, match="injected"):
         ledger.publish_run(record)
     assert not ledger._path(cell.cell_id).exists()
-    assert not tuple(ledger.root.glob(f".{cell.cell_id}.json.*"))
+    leftovers = tuple(ledger.root.glob(f".{cell.cell_id}.json.*"))
+    if os.name == "nt":
+        assert not leftovers
+    else:
+        # POSIX has no portable unlink-by-open-handle operation. The publisher
+        # deliberately retains only private, dot-prefixed orphans instead of
+        # risking deletion of a racing replacement by pathname.
+        assert len(leftovers) == 2
+        assert {path.suffix for path in leftovers} == {".tmp", ".lock"}
+        assert all(path.is_file() and not path.is_symlink() for path in leftovers)
+        assert all(path.stat().st_mode & 0o077 == 0 for path in leftovers)
 
 
 def test_latest_control_and_immutable_best_are_distinct_bound_artifacts() -> None:
