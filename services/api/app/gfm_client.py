@@ -799,6 +799,7 @@ class CoreRunBindingStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self.root = _reject_link_components(self.root)
         self.root = self.root.resolve(strict=True)
+        self._lock = threading.RLock()
 
     def _path(self, run_id: str) -> Path:
         CoreGateway._validate_run_id(run_id)
@@ -809,6 +810,10 @@ class CoreRunBindingStore:
         return _reject_link_components(self.root / f"{run_id}.anchor.json")
 
     def save(self, binding: CoreRunBinding) -> None:
+        with self._lock:
+            self._save(binding)
+
+    def _save(self, binding: CoreRunBinding) -> None:
         try:
             anchor_payload: dict[str, Any] = {
                 "schemaVersion": "socialgraph-fm.core-api-run-binding-anchor/1.0",
@@ -889,20 +894,25 @@ class CoreRunBindingStore:
                     pass
                 else:
                     owned_identity = temporary_identity
+            # Removing the temporary hard link changes the published inode's
+            # ctime on POSIX. Keep cleanup and every in-process verifier in the
+            # same short critical section without serializing the no-clobber link.
+            with _CORE_RUN_BINDING_LOCK:
                 temporary.unlink(missing_ok=True)
-            _flush_parent_directory(self.root)
-            final_identity = self._require_same_record(
-                path, record, expected_bytes=expected_bytes
-            )
-            if owned_identity is not None and final_identity != owned_identity:
-                raise GfmProxyError(502, "GFM_CORE_RUN_BINDING_INVALID")
-            return owned_identity
+                _flush_parent_directory(self.root)
+                final_identity = self._require_same_record(
+                    path, record, expected_bytes=expected_bytes
+                )
+                if owned_identity is not None and final_identity != owned_identity:
+                    raise GfmProxyError(502, "GFM_CORE_RUN_BINDING_INVALID")
+                return owned_identity
         except GfmProxyError:
             raise
         except (OSError, ValueError) as error:
             raise GfmProxyError(502, "GFM_CORE_RUN_BINDING_INVALID") from error
         finally:
-            temporary.unlink(missing_ok=True)
+            with _CORE_RUN_BINDING_LOCK:
+                temporary.unlink(missing_ok=True)
 
     def _remove_owned_record(
         self,
@@ -1186,16 +1196,17 @@ class CoreRunBindingStore:
         path: Path,
         record_type: type[_CoreRunBindingRecord],
     ) -> tuple[_CoreRunBindingRecord, bytes, tuple[int, int]]:
-        try:
-            captured = _read_confined_snapshot(
-                self.root,
-                path.name,
-                max_bytes=MAX_CORE_RUN_BINDING_RECORD_BYTES,
-            )
-            observed = record_type.model_validate_json(captured.payload)
-        except (OSError, ValueError) as error:
-            raise GfmProxyError(502, "GFM_CORE_RUN_BINDING_INVALID") from error
-        return observed, captured.payload, (captured.token[0], captured.token[1])
+        with _CORE_RUN_BINDING_LOCK:
+            try:
+                captured = _read_confined_snapshot(
+                    self.root,
+                    path.name,
+                    max_bytes=MAX_CORE_RUN_BINDING_RECORD_BYTES,
+                )
+                observed = record_type.model_validate_json(captured.payload)
+            except (OSError, ValueError) as error:
+                raise GfmProxyError(502, "GFM_CORE_RUN_BINDING_INVALID") from error
+            return observed, captured.payload, (captured.token[0], captured.token[1])
 
     def _require_same_record(
         self,
@@ -1211,6 +1222,10 @@ class CoreRunBindingStore:
         return identity
 
     def get(self, run_id: str) -> CoreRunBinding:
+        with self._lock:
+            return self._get(run_id)
+
+    def _get(self, run_id: str) -> CoreRunBinding:
         try:
             path = self._path(run_id)
             anchor_path = self._anchor_path(run_id)

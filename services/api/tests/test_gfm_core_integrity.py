@@ -2672,7 +2672,11 @@ async def test_different_concurrent_publishers_use_real_no_overwrite_conflict(
             )
         )
     )
-    store = CoreRunBindingStore(serving_fixture.root / "different-concurrent")
+    publication_root = serving_fixture.root / "different-concurrent"
+    stores = (
+        CoreRunBindingStore(publication_root),
+        CoreRunBindingStore(publication_root),
+    )
     module = importlib.import_module("app.gfm_client")
     real_link = module.os.link
     barrier = threading.Barrier(2)
@@ -2687,15 +2691,16 @@ async def test_different_concurrent_publishers_use_real_no_overwrite_conflict(
 
     monkeypatch.setattr(module.os, "link", synchronized_link)
 
-    def publish(candidate: CoreRunBinding) -> CoreRunBinding | GfmProxyError:
+    def publish(index: int) -> CoreRunBinding | GfmProxyError:
+        candidate = (original, changed)[index]
         try:
-            store.save(candidate)
+            stores[index].save(candidate)
             return candidate
         except GfmProxyError as error:
             return error
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        outcomes = list(executor.map(publish, (original, changed)))
+        outcomes = list(executor.map(publish, range(2)))
 
     winners = [value for value in outcomes if isinstance(value, CoreRunBinding)]
     failures = [value for value in outcomes if isinstance(value, GfmProxyError)]
@@ -2703,7 +2708,7 @@ async def test_different_concurrent_publishers_use_real_no_overwrite_conflict(
     assert len(winners) == 1
     assert len(failures) == 1
     assert failures[0].code == "GFM_CORE_RUN_BINDING_INVALID"
-    assert store.get(original.run_id) == winners[0]
+    assert stores[0].get(original.run_id) == winners[0]
 
 
 @pytest.mark.anyio
@@ -3045,8 +3050,12 @@ async def test_concurrent_exact_binding_only_repairs_reach_real_anchor_link_conf
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     binding = await _publication_candidate(serving_fixture)
-    store = CoreRunBindingStore(serving_fixture.root / "concurrent-anchor-repair")
-    binding_path = store.root / f"{binding.run_id}.json"
+    publication_root = serving_fixture.root / "concurrent-anchor-repair"
+    stores = (
+        CoreRunBindingStore(publication_root),
+        CoreRunBindingStore(publication_root),
+    )
+    binding_path = stores[0].root / f"{binding.run_id}.json"
     binding_path.write_bytes(_expected_canonical_record_bytes(binding))
     module = importlib.import_module("app.gfm_client")
     real_link = module.os.link
@@ -3064,19 +3073,19 @@ async def test_concurrent_exact_binding_only_repairs_reach_real_anchor_link_conf
 
     monkeypatch.setattr(module.os, "link", synchronized_anchor_link)
 
-    def repair() -> GfmProxyError | None:
+    def repair(index: int) -> GfmProxyError | None:
         try:
-            store.save(binding)
+            stores[index].save(binding)
         except GfmProxyError as error:
             return error
         return None
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        outcomes = list(executor.map(lambda _index: repair(), range(2)))
+        outcomes = list(executor.map(repair, range(2)))
 
     assert outcomes == [None, None]
     assert anchor_link_calls == 2
-    assert store.get(binding.run_id) == binding
+    assert stores[0].get(binding.run_id) == binding
 
 
 @pytest.mark.anyio

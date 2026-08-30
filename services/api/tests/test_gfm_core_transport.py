@@ -294,6 +294,7 @@ def _serving_snapshot(
 @pytest.mark.anyio
 async def test_api_persists_original_binding_and_rejects_coherent_result_substitution(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _LifecycleClient()
     binding_store = CoreRunBindingStore(tmp_path / "api-run-bindings")
@@ -484,6 +485,24 @@ async def test_api_persists_original_binding_and_rejects_coherent_result_substit
     persisted = binding_store.get(run_id)
     concurrent_store = CoreRunBindingStore(tmp_path / "concurrent-bindings")
     barrier = threading.Barrier(8)
+    counter_lock = threading.Lock()
+    active_publishers = 0
+    maximum_active_publishers = 0
+    original_publish_record = concurrent_store._publish_record
+
+    def tracked_publish_record(path, record):
+        nonlocal active_publishers, maximum_active_publishers
+        with counter_lock:
+            active_publishers += 1
+            maximum_active_publishers = max(maximum_active_publishers, active_publishers)
+        try:
+            time.sleep(0.01)
+            return original_publish_record(path, record)
+        finally:
+            with counter_lock:
+                active_publishers -= 1
+
+    monkeypatch.setattr(concurrent_store, "_publish_record", tracked_publish_record)
 
     def publish_same_binding() -> None:
         barrier.wait(timeout=5)
@@ -493,6 +512,7 @@ async def test_api_persists_original_binding_and_rejects_coherent_result_substit
         futures = [executor.submit(publish_same_binding) for _ in range(8)]
         for future in futures:
             future.result(timeout=5)
+    assert maximum_active_publishers == 1
     assert concurrent_store.get(run_id) == persisted
 
     restarted = CoreGateway(client, binding_store=CoreRunBindingStore(tmp_path / "api-run-bindings"))
