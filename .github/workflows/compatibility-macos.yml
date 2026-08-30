@@ -36,6 +36,8 @@ jobs:
   gfm-macos-arm64-cpu:
     continue-on-error: true
     runs-on: macos-15
+    env:
+      SOCIALGRAPH_GOVERNANCE_SKILL_CATALOG: ${{ github.workspace }}/skills/governance/catalog.json
     defaults:
       run:
         working-directory: packages/gfm

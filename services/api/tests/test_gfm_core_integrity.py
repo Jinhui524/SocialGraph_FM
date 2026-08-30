@@ -2399,7 +2399,7 @@ async def test_binding_publication_uses_private_exclusive_temps_and_canonical_by
     binding = await _publication_candidate(serving_fixture)
     module = importlib.import_module("app.gfm_client")
     real_open = module.os.open
-    temp_opens: list[tuple[int, int]] = []
+    temp_opens: list[tuple[int, int, int | None]] = []
 
     def observed_open(
         path: str | bytes | Path,
@@ -2409,7 +2409,7 @@ async def test_binding_publication_uses_private_exclusive_temps_and_canonical_by
         dir_fd: int | None = None,
     ) -> int:
         if str(path).endswith(".tmp"):
-            temp_opens.append((flags, mode))
+            temp_opens.append((flags, mode, dir_fd))
         if dir_fd is None:
             return real_open(path, flags, mode)
         return real_open(path, flags, mode, dir_fd=dir_fd)
@@ -2418,9 +2418,17 @@ async def test_binding_publication_uses_private_exclusive_temps_and_canonical_by
     store = CoreRunBindingStore(serving_fixture.root / "private-publication")
     store.save(binding)
 
-    assert len(temp_opens) == 2
-    assert all(flags & os.O_CREAT and flags & os.O_EXCL for flags, _mode in temp_opens)
-    assert all(mode & 0o777 == 0o600 for _flags, mode in temp_opens)
+    creation_opens = [entry for entry in temp_opens if entry[0] & os.O_CREAT]
+    safe_reopens = [entry for entry in temp_opens if not entry[0] & os.O_CREAT]
+    assert len(creation_opens) == 2
+    assert all(flags & os.O_EXCL for flags, _mode, _dir_fd in creation_opens)
+    assert all(mode & 0o777 == 0o600 for _flags, mode, _dir_fd in creation_opens)
+    if os.name == "nt":
+        assert not safe_reopens
+    else:
+        assert len(safe_reopens) == 2
+        assert all(dir_fd is not None for _flags, _mode, dir_fd in safe_reopens)
+        assert all(flags & os.O_NOFOLLOW for flags, _mode, _dir_fd in safe_reopens)
     binding_path = store.root / f"{binding.run_id}.json"
     anchor_path = store.root / f"{binding.run_id}.anchor.json"
     assert binding_path.read_bytes() == _expected_canonical_record_bytes(binding)

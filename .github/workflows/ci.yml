@@ -94,6 +94,8 @@ jobs:
 
   gfm-ubuntu-cpu:
     runs-on: ubuntu-latest
+    env:
+      SOCIALGRAPH_GOVERNANCE_SKILL_CATALOG: ${{ github.workspace }}/skills/governance/catalog.json
     defaults:
       run:
         working-directory: packages/gfm
@@ -121,6 +123,8 @@ jobs:
 
   gfm-windows-cpu:
     runs-on: windows-latest
+    env:
+      SOCIALGRAPH_GOVERNANCE_SKILL_CATALOG: ${{ github.workspace }}/skills/governance/catalog.json
     defaults:
       run:
         working-directory: packages/gfm
