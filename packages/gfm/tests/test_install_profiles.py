@@ -129,3 +129,13 @@ def test_model_release_runtime_provenance_files_remain_frozen():
     assert _sha256(environment_lock) == (
         "a9f738773e7e85c7c462e3ee06e02d120b915c9bc35cd5add2555d92c666ff6c"
     )
+
+
+def test_macos_arm64_lock_accepts_the_pypi_torch_wheel() -> None:
+    lock = (
+        PROJECT / "locks" / "install-macos-arm64-cpu-pt28.requirements.txt"
+    ).read_text(encoding="utf-8")
+    assert (
+        "--hash=sha256:619c2869db3ada2c0105487ba21b5008defcc472d23f8b80ed91ac4a380283b0"
+        in lock
+    )

@@ -496,6 +496,30 @@ def test_public_runtime_bundle_is_hash_bound_and_machine_derived_files_are_exclu
     assert "research" not in manifest
 
 
+def test_github_ci_uses_current_runtime_paths_and_explicit_gfm_roots() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+    assert "var/config/core-api.env" not in workflow
+    assert "registry/socialgraph-fm.json" not in workflow
+    assert "var/config/socialgraph-api.env" in workflow
+    assert "registry/socialgraph-global.json" in workflow
+    assert "--config-file .github/mypy-runtime.ini" in workflow
+    assert "--config-file ../../.github/mypy-api.ini" in workflow
+    assert "--config-file ../../.github/mypy-gfm.ini" in workflow
+    assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in workflow
+    assert (
+        'python -m socialgraph_gfm.cli doctor --root "${{ runner.temp }}/socialgraph-fm"'
+        in workflow
+    )
+    assert (
+        '.venv/Scripts/python.exe -m socialgraph_gfm.cli doctor --device cpu --root "${{ runner.temp }}/socialgraph-fm"'
+        in workflow
+    )
+    assert (
+        '.venv/bin/python -m socialgraph_gfm.cli doctor --device cpu --root "${{ runner.temp }}/socialgraph-fm"'
+        in workflow
+    )
+
+
 def test_startup_powershell_behavior() -> None:
     powershell = shutil.which("powershell") or shutil.which("pwsh")
     if powershell is None:

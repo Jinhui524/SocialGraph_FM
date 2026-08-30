@@ -23,7 +23,7 @@
     },
     "macos-arm64-cpu-pt28": {
       "requirementsLock": "locks/install-macos-arm64-cpu-pt28.requirements.txt",
-      "requirementsLockSha256": "d23d65929631ee3070600e087ea54963cffa26c6229e8fd84a17ce06d601c500",
+      "requirementsLockSha256": "0b7aa816ff4017aaa526c6d938fe7aa46b2fd417bc67826fe0ad7889b15a6099",
       "artifactHashesResolved": true
     },
     "windows-x86_64-cu130-pt212": {
