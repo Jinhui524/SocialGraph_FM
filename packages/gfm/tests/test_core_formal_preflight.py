@@ -617,7 +617,12 @@ def test_post_rename_failure_never_deletes_a_replacement_directory(
         (target / "sentinel").write_bytes(b"racer")
 
     monkeypatch.setattr(formal_preflight, "_PUBLICATION_SEAM", replace_after_commit)
-    with pytest.raises(ValueError, match="published experiment dataset"):
+    expected_error = (
+        "published experiment dataset"
+        if os.name == "nt"
+        else "owned directory is no longer published"
+    )
+    with pytest.raises(ValueError, match=expected_error):
         publish_experiment_dataset(
             runtime_root=tmp_path,
             requirement_id="email-eu-core",

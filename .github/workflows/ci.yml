@@ -116,7 +116,7 @@ jobs:
       - run: python -m pip wheel . --no-deps --no-build-isolation --wheel-dir "${{ runner.temp }}/wheelhouse"
       - run: ruff check src tests
       - run: mypy --config-file ../../.github/mypy-gfm.ini src
-      - run: pytest -vv --maxfail=1 -ra
+      - run: pytest -vv -ra
       - run: python -m socialgraph_gfm.cli doctor --root "${{ runner.temp }}/socialgraph-fm" --json
       - run: python -m socialgraph_gfm.cli smoke --fixture both --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
       - run: python -m socialgraph_gfm.cli preflight --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
