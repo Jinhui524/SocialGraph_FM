@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 import torch
 
@@ -114,6 +116,13 @@ def test_router_graph_stats_affect_routes_and_cross_domain_masks_russia_adapter(
     assert bool((high.indices == 1).all(dim=0).any())
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "the supported Windows CPU path is FP32; the pinned PyTorch 2.8 Windows "
+        "wheel can raise a native illegal instruction in BF16 Linear on hosted runners"
+    ),
+)
 def test_router_cpu_autocast_aligns_sparse_residual_accumulator_dtype() -> None:
     router = SparseTop2Router(
         hidden_dim=256,
