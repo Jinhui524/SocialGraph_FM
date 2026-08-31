@@ -157,6 +157,13 @@ def run(arguments: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # GitHub's English Windows runners expose a legacy code page even though
+    # this Chinese-first CLI writes through a Unicode-capable terminal. Force a
+    # stable native encoding so diagnostics never fail while formatting text.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
     try:
         return run(build_parser().parse_args(argv))
     except (RuntimeError, ValueError) as error:

@@ -23,6 +23,24 @@ SOURCE_FILES = (
     "vite.config.mjs",
 )
 SOURCE_DIRECTORIES = ("public", "src")
+TEXT_SOURCE_SUFFIXES = frozenset(
+    {
+        ".css",
+        ".csv",
+        ".gexf",
+        ".graphml",
+        ".html",
+        ".js",
+        ".json",
+        ".md",
+        ".mjs",
+        ".svg",
+        ".ts",
+        ".tsv",
+        ".tsx",
+        ".txt",
+    }
+)
 
 
 def _sha256(data: bytes) -> str:
@@ -59,6 +77,8 @@ def _source_inventory(web_root: Path) -> tuple[dict[str, Any], ...]:
     inventory: list[dict[str, Any]] = []
     for path in sorted(set(paths), key=lambda value: value.relative_to(web_root).as_posix()):
         payload = path.read_bytes()
+        if path.suffix.lower() in TEXT_SOURCE_SUFFIXES:
+            payload = payload.replace(b"\r\n", b"\n")
         inventory.append(
             {
                 "path": path.relative_to(web_root).as_posix(),

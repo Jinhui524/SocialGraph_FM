@@ -54,6 +54,7 @@ packages = ["src/socialgraph_gfm"]
 "constraints" = "socialgraph_gfm/resources/constraints"
 "locks/runtime-lock-manifest.json" = "socialgraph_gfm/resources/runtime-lock-manifest.json"
 "locks/cpu-ci.requirements.txt" = "socialgraph_gfm/resources/locks/cpu-ci.requirements.txt"
+"locks/windows-cpu.requirements.txt" = "socialgraph_gfm/resources/locks/windows-cpu.requirements.txt"
 "locks/install-lock-manifest.json" = "socialgraph_gfm/resources/install-lock-manifest.json"
 "locks/install-windows-x86_64-cpu-pt28.requirements.txt" = "socialgraph_gfm/resources/locks/install-windows-x86_64-cpu-pt28.requirements.txt"
 "locks/install-linux-x86_64-cpu-pt28.requirements.txt" = "socialgraph_gfm/resources/locks/install-linux-x86_64-cpu-pt28.requirements.txt"

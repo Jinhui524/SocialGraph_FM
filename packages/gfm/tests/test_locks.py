@@ -46,6 +46,12 @@ def test_wheel_resources_include_gfm_lock_once_and_constraints_as_one_tree():
 
     assert force_include["constraints"] == "socialgraph_gfm/resources/constraints"
     assert "locks/windows-cu130-gfm.requirements.txt" not in force_include
+    assert force_include["locks/cpu-ci.requirements.txt"] == (
+        "socialgraph_gfm/resources/locks/cpu-ci.requirements.txt"
+    )
+    assert force_include["locks/windows-cpu.requirements.txt"] == (
+        "socialgraph_gfm/resources/locks/windows-cpu.requirements.txt"
+    )
     assert force_include["install-profiles.json"] == (
         "socialgraph_gfm/resources/install-profiles.json"
     )

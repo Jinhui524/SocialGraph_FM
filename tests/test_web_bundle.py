@@ -78,3 +78,24 @@ def test_tracked_web_bundle_is_self_consistent_and_source_bound() -> None:
             payload = opened.read(item["path"])
             assert len(payload) == item["bytes"]
             assert hashlib.sha256(payload).hexdigest() == item["sha256"]
+
+
+def test_source_inventory_is_independent_of_text_line_endings(tmp_path: Path) -> None:
+    module = _module()
+    for name in module.SOURCE_FILES:
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"first\nsecond\n")
+    for name in module.SOURCE_DIRECTORIES:
+        (tmp_path / name).mkdir(parents=True, exist_ok=True)
+    text_source = tmp_path / "src" / "example.css"
+    binary_source = tmp_path / "public" / "example.bin"
+    text_source.write_bytes(b"alpha\nbeta\n")
+    binary_source.write_bytes(b"\x00\r\n\xff")
+
+    lf_inventory = module._source_inventory(tmp_path)
+    for candidate in (*module.SOURCE_FILES, "src/example.css"):
+        path = tmp_path / candidate
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+
+    assert module._source_inventory(tmp_path) == lf_inventory

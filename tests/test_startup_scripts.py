@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,9 @@ def _run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPTS / "socialgraph.py"), *arguments],
         cwd=PROJECT_ROOT,
+        input="",
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
     )
@@ -87,7 +90,37 @@ def test_onboard_and_reconfigure_expose_exactly_three_llm_inputs() -> None:
 def test_noninteractive_llm_configuration_fails_before_install_when_incomplete() -> None:
     completed = _run_cli("onboard")
     assert completed.returncode == 1
-    assert "cancelled" in completed.stderr
+    assert "requires --api-base, --model, and --api-key-stdin" in completed.stderr
+
+
+def test_cli_forces_utf8_when_windows_exposes_a_legacy_code_page(
+    tmp_path: Path,
+) -> None:
+    for marker in ("apps/web", "services/api", "packages/gfm"):
+        (tmp_path / marker).mkdir(parents=True)
+    manifest = tmp_path / "bundles" / "runtime-manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}\n", encoding="utf-8")
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "cp1252"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "socialgraph.py"),
+            "--project-root",
+            str(tmp_path),
+            "start",
+        ],
+        cwd=PROJECT_ROOT,
+        input="",
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+        env=environment,
+    )
+    assert completed.returncode == 1
+    assert "请先完成初始化" in completed.stderr
 
 
 def test_single_powershell_wrapper_delegates_to_the_python_entrypoint() -> None:
@@ -148,6 +181,20 @@ def test_ci_and_repository_have_no_public_cuda_or_macos_workflow() -> None:
     assert not (PROJECT_ROOT / ".github" / "workflows" / "compatibility-macos.yml").exists()
     assert not (PROJECT_ROOT / ".github" / "workflows" / "release-cuda.yml").exists()
     assert not (PROJECT_ROOT / "packages" / "gfm" / "Dockerfile").exists()
+
+
+def test_ci_uses_the_platform_specific_gfm_cpu_locks() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+    ubuntu_job = workflow.split("  gfm-ubuntu-cpu:\n", 1)[1].split(
+        "  gfm-windows-cpu:\n", 1
+    )[0]
+    windows_job = workflow.split("  gfm-windows-cpu:\n", 1)[1].split(
+        "  repository-policy:\n", 1
+    )[0]
+    assert "-r locks/cpu-ci.requirements.txt" in ubuntu_job
+    assert "windows-cpu.requirements.txt" not in ubuntu_job
+    assert "-r locks/windows-cpu.requirements.txt" in windows_job
+    assert "-r locks/cpu-ci.requirements.txt" not in windows_job
 
 
 def test_public_runtime_bundle_and_web_bundle_are_hash_bound() -> None:

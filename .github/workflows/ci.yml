@@ -130,7 +130,7 @@ jobs:
           --index-url https://pypi.org/simple
           --extra-index-url https://download.pytorch.org/whl/cpu
           --find-links https://data.pyg.org/whl/torch-2.8.0+cpu.html
-          -r locks/cpu-ci.requirements.txt
+          -r locks/windows-cpu.requirements.txt
       - run: .venv/Scripts/python.exe -m pip install --no-deps --no-build-isolation .
       - run: .venv/Scripts/python.exe -m pip check
       - run: .venv/Scripts/python.exe -m pytest -vv --maxfail=1 -ra
