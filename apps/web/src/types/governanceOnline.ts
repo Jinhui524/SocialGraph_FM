@@ -41,7 +41,7 @@ export interface GovernanceOnlineHealth {
   readonly modelVersionId: string | null;
   readonly modelVersionHash: string | null;
   readonly modelStateHash: string | null;
-  readonly device: "cpu" | "cuda";
+  readonly device: "cpu";
   readonly dtype: "float32" | "float16" | "bfloat16";
   readonly loadedAt: string | null;
   readonly queueDepth: number;

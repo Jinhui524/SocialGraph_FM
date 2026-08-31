@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ASSISTANT_PRODUCT_SKILL_NAMESPACE,
+  ASSISTANT_PUBLIC_SKILLS,
+  ASSISTANT_SKILLS_SCHEMA,
+  ASSISTANT_SKILL_POLICIES,
   GOVERNANCE_CONFIRMATION_GATED_SKILLS,
   GOVERNANCE_PRODUCT_SKILL_NAMESPACE,
   GOVERNANCE_PUBLIC_SKILLS,
@@ -11,6 +15,21 @@ import {
 } from "./governanceSkills";
 
 describe("generated SocialGraph-FM Governance product-skill contract", () => {
+  it("keeps all six Assistant Skills in their canonical namespace and order", () => {
+    expect(ASSISTANT_PRODUCT_SKILL_NAMESPACE).toBe("socialgraph-fm.product-skills.assistant");
+    expect(ASSISTANT_SKILLS_SCHEMA).toBe("socialgraph-fm.product-skills.assistant/1.0");
+    expect(ASSISTANT_PUBLIC_SKILLS).toEqual([
+      "answer_governance_question",
+      "summarize_node_evidence",
+      "generate_global_situation_report",
+      "generate_account_evidence_report",
+      "generate_coordination_report",
+      "generate_case_review_draft",
+    ]);
+    expect(ASSISTANT_SKILL_POLICIES.map((item) => item.name)).toEqual(ASSISTANT_PUBLIC_SKILLS);
+    expect(ASSISTANT_SKILL_POLICIES.every((item) => item.readOnly && !item.confirmationRequired)).toBe(true);
+  });
+
   it("keeps a distinct namespace and the stable wire version", () => {
     expect(GOVERNANCE_PRODUCT_SKILL_NAMESPACE).toBe(
       "socialgraph-fm.product-skills.governance",

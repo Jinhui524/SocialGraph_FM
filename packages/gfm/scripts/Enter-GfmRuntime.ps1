@@ -4,8 +4,6 @@ param(
   [string]$GfmPython = $env:SOCIALGRAPH_GFM_PYTHON,
   [ValidateSet("fetch", "run")]
   [string]$Operation = "run",
-  [ValidateSet("base", "text")]
-  [string]$DependencyProfile = "base",
   [switch]$PromptForSecrets,
   [switch]$PromptForWikimediaSalt,
   [scriptblock]$SecretAction
@@ -30,37 +28,9 @@ $runtimeContext = . (Join-Path $PSScriptRoot "Enter-BaselineRuntime.ps1") `
   -GfmPython $GfmPython `
   -Operation $Operation
 
-# Corpus fetch/prepare and non-text tests need only the base CUDA profile. Request the
-# optional profile before BGE-M3 embedding so a partial environment fails before a heavy
-# job starts. Distribution metadata is checked without importing the model stack or
-# downloading model weights.
-if ($DependencyProfile -eq "text") {
-  try {
-    $flagEmbeddingVersion = (
-      & $runtimeContext.GfmPython -c `
-        "import importlib.metadata as m; print(m.version('FlagEmbedding'))" 2>$null |
-        Out-String
-    ).Trim()
-    $flagEmbeddingExitCode = $LASTEXITCODE
-    $transformersVersion = (
-      & $runtimeContext.GfmPython -c `
-        "import importlib.metadata as m; print(m.version('transformers'))" 2>$null |
-        Out-String
-    ).Trim()
-    $transformersExitCode = $LASTEXITCODE
-    if (
-      $flagEmbeddingExitCode -ne 0 -or $flagEmbeddingVersion -ne "1.4.0" -or
-      $transformersExitCode -ne 0 -or $transformersVersion -ne "5.14.1"
-    ) {
-      throw "optional dependency version mismatch"
-    }
-  } catch {
-    throw "The windows-cu130-gfm optional runtime is not installed exactly. Sync locks\windows-cu130-gfm.requirements.txt with --require-hashes --no-build."
-  }
-}
-
-$profileName = if ($DependencyProfile -eq "text") { "windows-cu130-gfm" } else { "windows-cu130" }
-$runtimeContext | Add-Member -NotePropertyName RuntimeLockProfile -NotePropertyValue $profileName
+# Research-only dependencies are installed explicitly through the pyproject
+# research extra. This launcher does not select dependency or hardware profiles.
+$runtimeContext | Add-Member -NotePropertyName RuntimeLockProfile -NotePropertyValue "cpu"
 
 # An already-running Codex process cannot inherit variables added later in another
 # terminal. This explicit interactive boundary avoids copying either secret into a

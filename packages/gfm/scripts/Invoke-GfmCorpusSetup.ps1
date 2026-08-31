@@ -10,7 +10,6 @@ $ErrorActionPreference = "Stop"
   -RuntimeRoot $RuntimeRoot `
   -GfmPython $GfmPython `
   -Operation fetch `
-  -DependencyProfile base `
   -PromptForSecrets `
   -SecretAction {
     param($Runtime)

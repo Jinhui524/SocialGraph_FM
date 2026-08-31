@@ -1,210 +1,117 @@
 # SocialGraph-FM
 
-[简体中文](README.zh-CN.md) · [Technical reference](docs/REFERENCE.md) ·
-[Skills reference](skills/README.md)
+面向社交网络治理的本地图基础模型工作台：把真实 GFM 推理、关系证据、协同行为线索、案例检索和人工复核组织在同一套可追溯流程中。
 
-SocialGraph-FM is a local, graph-foundation-model workbench for social-network
-governance. It joins deterministic graph inspection, real Global-model inference,
-target-domain adaptation, evidence retrieval, controlled Skills, human review, and
-report generation without turning model scores into automated decisions.
+![SocialGraph-FM 界面](apps/web/public/assets/socialgraph-atlas-light.webp)
 
-The public repository contains the complete user runtime: Global, In-domain,
-Low-label, and Cross-domain checkpoints; Russia 01–04 and the full Russia input;
-zero-shot and few-shot target tasks; the governance knowledge index; and 68 reviewed
-cases. Training corpora, training runs, caches, credentials, and local user state are
-not published.
+> 模型分数只用于安排人工复核顺序，不证明账号身份、意图或违规事实，也不能作为自动处置依据。
 
-> Model output is a prioritization signal for human review. It is not proof of
-> identity, intent, wrongdoing, or a basis for automated sanctions.
+## 主要能力
 
-## Why this project
+- 导入 CSV、JSON、GraphML 和 GEXF，完成字段映射、质量校验、图谱浏览与会话恢复。
+- 运行随仓库发布的 Global 图基础模型，并比较 In-domain、Low-label 和 Cross-domain 协议。
+- 完成 zero-shot / few-shot 目标域适配，保留 checkpoint、图版本和来源哈希。
+- 查看重点账号、协同群组、事实关系、潜在线索、证据子图和相似复核案例。
+- 使用大模型生成受证据约束的问答、摘要和研判报告，再由人员记录结论并导出报告。
 
-SocialGraph-FM keeps five kinds of information separate and traceable: imported graph
-facts, model predictions, deterministic derived clues, retrieved material, and human
-conclusions. This makes the system useful for governance research, coordinated-behavior
-analysis, anomaly/community investigation, teaching demonstrations, and platform-risk
-prototyping while preserving an auditable human decision boundary.
+## 环境要求
 
-Ordinary CSV, JSON, GraphML, and GEXF files support mapping, visualization, and
-deterministic structural analysis. Only a validated, hash-bound Global inference
-package can enter the model path, so ordinary topology is never presented as a model
-prediction.
-
-## Architecture
-
-```text
-Browser
-  │ loopback HTTP; no provider key or direct model filesystem access
-  ▼
-apps/web        React governance and research workbench
-  │
-  ▼
-services/api    Torch-free FastAPI validation, state, confirmation, and LLM boundary
-  │ authenticated internal loopback HTTP
-  ▼
-packages/gfm    Isolated PyTorch/PyG inference, adaptation, and retrieval process
-```
-
-All three services bind to loopback addresses. The configured LLM key is stored below
-ignored `var/` state and injected only into the API process; it is not passed to the
-browser or GFM process.
-
-## Requirements and support
-
+- Windows x64 或 Ubuntu x64
 - CPython 3.12
-- Node.js 24.x and npm 11.x
-- An OpenAI-compatible or Anthropic-compatible model API for LLM-assisted workflows
+- 可访问的 OpenAI-compatible Chat Completions API
 
-| Platform | Runtime profile | Release status |
-| --- | --- | --- |
-| Windows x86-64 | CPU, PyTorch 2.8 / PyG 2.8 | Required CI path |
-| Windows x86-64 with NVIDIA GPU | CUDA 13.0, PyTorch 2.12 / PyG 2.8 | Validated on a temporary self-hosted GPU runner for releases |
-| Ubuntu glibc x86-64 | CPU, PyTorch 2.8 / PyG 2.8 | Required CI path |
-| macOS ARM64 | CPU, PyTorch 2.8 / PyG 2.8 | Best-effort, non-blocking |
+公开运行版固定使用 CPU。普通用户不需要 CUDA、Node.js、npm、Conda，也不需要自行安装训练或研究依赖。首次安装仍会下载 PyTorch CPU、PyG 和 `pyg-lib`，它们用于运行真实图模型与固定邻居采样，因此不能删除。
 
-Linux CUDA, Intel macOS, MPS, ROCm, musl, and other architectures are not current
-release commitments. Git is needed to clone or maintain the repository, but a GitHub
-Download ZIP can be onboarded without Git.
+## 三步启动
 
-The default wheel profile is CPU. CUDA wheels are installed only when the user passes
-`--wheel-profile cuda`. Wheel selection and runtime device policy are independent:
-`--device-policy auto` uses verified CUDA when available and otherwise the verified CPU
-fallback, `cpu` forces CPU execution, and `cuda-required` rejects a host without working
-CUDA.
-
-## Quick start
-
-Run these commands from the repository root (`python3` may replace `python` on POSIX):
+在仓库根目录执行（Ubuntu 可将 `python` 换成 `python3`）：
 
 ```console
 python scripts/socialgraph.py onboard
-python scripts/socialgraph.py start --llm-mode required
+python scripts/socialgraph.py start
 python scripts/socialgraph.py stop
 ```
 
-After `start`, open `http://127.0.0.1:5173`; run `stop` when the session is finished.
-`onboard` checks Python and platform compatibility, creates or safely reuses isolated
-API/GFM environments, installs the default CPU profile, verifies bundled assets, and
-guides model-API configuration. To opt into the Windows CUDA profile, run
-`python scripts/socialgraph.py onboard --wheel-profile cuda --device-policy auto`.
-
-Windows users may use `scripts/onboard.ps1`, `scripts/start.ps1`, and
-`scripts/stop.ps1` as equivalent wrappers.
-
-## Model API configuration
-
-The onboarding wizard supports one active channel at a time:
-
-| Channel | Protocol | Default authentication |
-| --- | --- | --- |
-| OpenAI | Responses | Bearer |
-| DeepSeek | Chat Completions | Bearer |
-| GLM | Chat Completions | Bearer |
-| Anthropic | Messages | `x-api-key` |
-| Custom OpenAI-compatible relay | Chat Completions or Responses | Bearer |
-| Custom Anthropic-compatible relay | Messages | `x-api-key` or Bearer |
-
-Supply the exact model ID and endpoint requested by the provider. The key is entered
-through hidden input and stored only in ignored `var/config/socialgraph-api.env` with
-restricted permissions. Remote plaintext HTTP, embedded credentials, URL query strings
-and fragments, redirects, inherited proxies, malformed endpoints, and oversized
-responses are rejected. ChatGPT subscriptions, Codex client login, and Claude Code
-login are not API credentials.
-
-Use `--llm-mode required` for the complete assisted workflow, `optional` to allow the
-deterministic fallback when no API is configured, or `disabled` to prevent private LLM
-configuration from being loaded.
-
-## Complete user workflows
-
-- Import ordinary CSV, JSON, GraphML, and GEXF graphs; map fields; validate quality;
-  create immutable GraphVersions; restore sessions; and explore topology.
-- Load a compatible governance input and execute a real Global model forward on CPU or
-  validated CUDA; preserve scores, representations, and expert routing with source
-  hashes.
-- Compare Global, In-domain, Low-label, and Cross-domain protocols without changing
-  their immutable checkpoints.
-- Register zero-shot and few-shot target tasks and complete governed target-domain
-  adaptation.
-- Rank candidate nodes and relations; discover coordination groups; inspect bounded
-  two-hop evidence; and retrieve knowledge and similar reviewed cases.
-- Create cases, record append-only human review events, restore governance sessions,
-  and export JSON, Markdown, or HTML reports.
-- Use the optional LLM only through a closed intent/Skill boundary with explicit
-  confirmation for model execution and persisted report drafts.
-
-Examples are under `examples/governance/`. Onboarding installs visible target-task
-copies below ignored `var/examples/target-domain/` for native file pickers.
-
-## Skills
-
-`skills/governance/catalog.json` is the sole machine-readable source for the eight
-public Governance Skills in namespace `socialgraph-fm.product-skills.governance`.
-
-| Skill | Access |
-| --- | --- |
-| `inspect_graph` | Read-only |
-| `run_governance_analysis` | Explicit confirmation before model execution |
-| `get_evidence_subgraph` | Read-only |
-| `discover_coordination_groups` | Read-only |
-| `rank_coordination_relations` | Read-only |
-| `retrieve_similar_cases` | Read-only |
-| `get_model_dataset_cards` | Read-only |
-| `draft_review_report` | Explicit confirmation before persistence |
-
-The four experimental Core Skills remain isolated in a different namespace under
-`skills/core/`; they are not aliases for Governance Skills and are not added to the
-Governance API catalog. Parameter schemas, routes, implementation mapping, hash
-provenance, confirmation behavior, and failure boundaries are documented in the
-[Skills reference](skills/README.md) and [Chinese Skills reference](skills/README.zh-CN.md).
-
-## Repository layout
+`onboard` 自动创建唯一的 `var/runtime` Python 环境、安装当前平台的 CPU 锁定依赖、校验模型和预构建 Web，并引导配置大模型。启动后访问：
 
 ```text
-apps/web/                 React governance and research workbench
-services/api/             Torch-free public API and orchestration boundary
-packages/gfm/             Global, Governance, Core, and Research model code
-packages/runtime/         Cross-platform setup and lifecycle manager
-bundles/models/           Hash-bound model assets
-bundles/governance/       Knowledge and reviewed-case indexes
-examples/governance/      Russia and target-domain inputs
-contracts/core/           Experimental Core serving contracts
-skills/governance/        Eight governed product Skills and public schemas
-skills/core/              Four isolated experimental Core Skills
-scripts/                  Setup, lifecycle, export, and verification tools
-docs/status/readiness.json  Experimental Core research-gate status only
-var/                      Ignored credentials, environments, logs, and user state
+http://127.0.0.1:5173
 ```
 
-`docs/status/readiness.json` reports only the formal research and serving gates of the
-experimental Core milestone. Its false gates do not mean that the complete Governance
-user runtime or Global model workflow is unavailable.
-
-See the [technical reference](docs/REFERENCE.md) for environment reuse, provider
-protocols, model/data identity, runtime state, troubleshooting, and release checks.
-
-## Governance and responsibility boundary
-
-SocialGraph-FM is a local research and decision-support system, not a hosted monitoring
-or enforcement service. It does not establish identity or intent, automatically block
-accounts, impose penalties, or replace contextual investigation. Operators remain
-responsible for data rights, lawful use, target-domain validation, interpretation,
-human review, and any downstream decision.
-
-Processed examples contain anonymized node identifiers, graph structure, and
-precomputed features rather than original usernames, posts, or URLs. New-domain scores
-retain Global calibration and must be treated as an unvalidated ranking reference.
-Retrieved documents and reviewed cases cannot rewrite graph facts or model scores.
-
-## Publication and license
-
-Maintainers can validate a checkout with the component commands in the
-[technical reference](docs/REFERENCE.md) and create a clean GitHub/ZIP artifact with:
+也可以单独重新配置或检查：
 
 ```console
-python scripts/socialgraph.py export-github --repository ../SocialGraph_FM-github --zip ../SocialGraph_FM-github.zip
+python scripts/socialgraph.py configure-llm
+python scripts/socialgraph.py doctor
 ```
 
-Source code is licensed under [Apache-2.0](LICENSE). Attribution, redistribution, and
-research provenance are recorded in [NOTICE](NOTICE),
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and [CITATION.cff](CITATION.cff).
+## 配置大模型
+
+只需提供三项：
+
+```text
+大模型 API 地址
+模型 ID
+API Key
+```
+
+系统固定使用 OpenAI-compatible Chat Completions、Bearer 鉴权、15 秒超时、温度 0 和最多 700 tokens。根地址、`/v1` 地址及完整 `/chat/completions` 地址会自动规范化。
+
+远程服务必须使用 HTTPS；本机回环地址可使用 HTTP。配置向导会先进行真实连通验证，验证失败不会完成保存。API Key 写入 Git 忽略的私有配置，只注入 API 进程，不进入浏览器、GFM 进程、日志或 Git。
+
+大模型是完整系统的必需组件。缺少配置、认证失败、模型不存在、限流、超时或返回非法结构时，相关问答与报告会明确失败，不会生成本地替代回答。
+
+## 研判 Assistant Skills
+
+这些只读 Skills 必须调用已配置的大模型；它们不会直接修改案件或保存人工结论。
+
+| Skill | 界面功能 | 使用的治理能力 |
+| --- | --- | --- |
+| `answer_governance_question` | 对话研究与研判助手自由追问 | 按问题选择允许的只读 Governance Skills |
+| `summarize_node_evidence` | 治理应用“智能证据研判” | 图谱概况、证据子图、关系排序 |
+| `generate_global_situation_report` | 研判助手“全局态势报告” | 图谱概况、群组、事实关系、潜在线索 |
+| `generate_account_evidence_report` | “当前账号证据报告” | 图谱概况、证据子图、事实与潜在关系 |
+| `generate_coordination_report` | “群组与关系研判报告” | 图谱概况、协同群组、关系排序 |
+| `generate_case_review_draft` | “人工研判草稿”预览 | 当前研判单、证据、群组和关系 |
+
+## Governance Skills
+
+| Skill | 作用 | 权限 |
+| --- | --- | --- |
+| `inspect_graph` | 查看图规模、关系模态与覆盖情况 | 只读 |
+| `run_governance_analysis` | 准备并运行 Global 治理分析 | 执行前确认 |
+| `get_evidence_subgraph` | 获取账号绑定的证据子图 | 只读 |
+| `discover_coordination_groups` | 分页查看协同群组 | 只读 |
+| `rank_coordination_relations` | 排序事实关系与潜在线索 | 只读 |
+| `retrieve_similar_cases` | 检索已审结的相似案例 | 只读 |
+| `get_model_dataset_cards` | 查看模型、数据与输入合同 | 只读 |
+| `draft_review_report` | 生成可保存的确定性案件草稿 | 保存前确认 |
+
+每个 Skill 的输入、输出、界面位置、底层调用、失败行为和实现路径见 [Skills 索引](skills/README.md)。`skills/governance/catalog.json` 仍是 8 个底层 Governance Skills 的唯一机器源。
+
+## 项目结构
+
+```text
+apps/web/             React 前端源码（普通用户运行预构建版本）
+services/api/         API、LLM 边界、状态与确认
+packages/gfm/         图模型推理、适配、检索与治理 Skills
+packages/runtime/     单环境安装与两进程生命周期
+bundles/              模型、治理索引和预构建 Web
+examples/governance/  Russia 与目标域示例
+skills/               Assistant、Governance 和实验 Core Skills
+docs/                 中文技术参考与实验状态
+scripts/              用户入口和发布校验工具
+var/                  Git 忽略的环境、凭据、日志和用户状态
+```
+
+普通用户只运行 API/Web 和 GFM 两个回环进程：API 在 `127.0.0.1:5173` 提供接口及静态页面，GFM 在内部 `127.0.0.1:8766` 提供隔离推理。开发 Web 源码时才需要 Node/npm。
+
+## 使用边界
+
+SocialGraph-FM 是本地研究和辅助决策系统，不是托管监控或自动执法服务。使用者需要自行保证数据权利、合法用途、目标域验证、语境核验和最终人工决策。普通图的结构统计不会被标记成模型预测，潜在线索也不会被标记成已登记事实关系。
+
+`docs/status/readiness.json` 只描述实验 Core 研究门禁，不代表 Governance 用户运行版不可用。更多安装锁、模型身份、API、研究依赖和排障信息见 [技术参考](docs/REFERENCE.md)。
+
+## 许可证与引用
+
+代码使用 [Apache-2.0](LICENSE)。归属、第三方来源和研究引用见 [NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [CITATION.cff](CITATION.cff)。

@@ -6,8 +6,7 @@ import {
   ShieldCheck,
 } from "@phosphor-icons/react";
 import type {
-  GovernanceAssistantDispatchContext,
-  GovernanceAnswerMode,
+  AssistantSkillName,
   GovernanceSkillsContext,
 } from "../../types/governanceSkills";
 
@@ -17,7 +16,7 @@ export interface ResearchPrompt {
   readonly icon: typeof Graph;
   readonly title: string;
   readonly text: string;
-  readonly answerMode: GovernanceAnswerMode;
+  readonly skill: AssistantSkillName;
   readonly contextScope: ResearchPromptContextScope;
 }
 export const researchPrompts = Object.freeze([
@@ -25,21 +24,21 @@ export const researchPrompts = Object.freeze([
     icon: Graph,
     title: "图谱基本情况",
     text: "请概括当前图谱的账号规模、事实关系数量、关系类型和连通情况",
-    answerMode: "overview",
+    skill: "answer_governance_question",
     contextScope: "graph",
   },
   {
     icon: ShieldCheck,
     title: "人工复核流程",
     text: "如果要人工复核这张图，应该按什么步骤进行",
-    answerMode: "review_guidance",
+    skill: "answer_governance_question",
     contextScope: "workspace",
   },
   {
     icon: BracketsCurly,
     title: "证据核对清单",
     text: "当前图谱还需要核对哪些关系和邻域证据",
-    answerMode: "evidence_requirements",
+    skill: "answer_governance_question",
     contextScope: "workspace",
   },
 ] satisfies readonly ResearchPrompt[]);
@@ -49,19 +48,19 @@ export function researchPromptForText(text: string): ResearchPrompt | undefined 
   return researchPrompts.find((prompt) => prompt.text === normalized);
 }
 
-export function researchPromptDispatchRequest(
+export function researchPromptSkillRequest(
   context: GovernanceSkillsContext,
   prompt: ResearchPrompt,
 ): {
   readonly context: GovernanceSkillsContext;
-  readonly options: GovernanceAssistantDispatchContext;
+  readonly skill: AssistantSkillName;
 } {
   const scopedContext = prompt.contextScope === "graph"
     ? Object.freeze({ graph: context.graph, model: context.model })
     : context;
   return Object.freeze({
     context: scopedContext,
-    options: Object.freeze({ intent: "answer" as const, answerMode: prompt.answerMode }),
+    skill: prompt.skill,
   });
 }
 

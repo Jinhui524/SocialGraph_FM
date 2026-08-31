@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SocialGraphApiError } from "../services/apiClient";
 import {
-  GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
+  ASSISTANT_SKILL_RESULT_SCHEMA,
   GOVERNANCE_SKILLS_SCHEMA,
   type GovernanceSkillsClientLike,
   type GovernanceSkillsContext,
@@ -39,22 +39,14 @@ function client(): GovernanceSkillsClientLike {
     catalog: vi.fn(async () => ({ schemaVersion: GOVERNANCE_SKILLS_SCHEMA, items: [], catalogHash: "d".repeat(64) })),
     executeSkill: vi.fn(async () => { throw new Error("direct skills are not exposed"); }),
     confirmSkill: vi.fn(async () => { throw new Error("direct skills are not exposed"); }),
-    assistantTurn: vi.fn(async () => { throw new Error("unused"); }),
-    dispatchAssistant: vi.fn(async () => ({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-      dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-      intent: "answer" as const,
-      answerMode: "overview" as const,
-      status: "completed" as const,
+    assistantCatalog: vi.fn(async () => { throw new Error("unused"); }),
+    executeAssistant: vi.fn(async (_context, skill) => ({
+      schemaVersion: ASSISTANT_SKILL_RESULT_SCHEMA,
+      executionId: `assistant-exec-${"4".repeat(32)}`,
+      skill,
       answer: "### 研判结论\n\n当前证据支持继续人工核验。",
       result: {},
-      deterministicFallback: false,
-      generationMode: "llm_assisted" as const,
-      fallbackPhase: null,
-      reasonCode: null,
       evidenceRefs: [{ label: "图谱检查", sourceKind: "skill" as const, hash: "e".repeat(64) }],
-      confirmation: null,
-      navigation: null,
       skillCalls: [{ skill: "inspect_graph" as const, requestHash: "f".repeat(64), resultHash: "1".repeat(64) }],
       citedHashes: ["2".repeat(64)],
       auditHash: "3".repeat(64),
@@ -94,21 +86,21 @@ describe("governance report assistant", () => {
     expect(api.executeSkill).not.toHaveBeenCalled();
   });
 
-  it("renders four wide report tasks and dispatches every task through an explicit answer mode", async () => {
+  it("renders four report tasks and executes every fixed Assistant Skill ID", async () => {
     const api = client();
     render(<GovernanceRagPanel client={api} context={context} onClose={vi.fn()} embedded />);
     const taskArea = screen.getByRole("group", { name: "研判报告任务" });
     expect(within(taskArea).getAllByRole("button")).toHaveLength(4);
 
-    const modes = [
-      ["全局态势报告", "analysis_summary"],
-      ["当前账号证据报告", "evidence_requirements"],
-      ["群组与关系研判报告", "coordination_summary"],
-      ["人工研判草稿", "case_draft"],
+    const skills = [
+      ["全局态势报告", "generate_global_situation_report"],
+      ["当前账号证据报告", "generate_account_evidence_report"],
+      ["群组与关系研判报告", "generate_coordination_report"],
+      ["人工研判草稿", "generate_case_review_draft"],
     ] as const;
-    for (const [name, answerMode] of modes) {
+    for (const [name, skill] of skills) {
       fireEvent.click(screen.getByRole("button", { name: new RegExp(name, "u") }));
-      await waitFor(() => expect(api.dispatchAssistant).toHaveBeenLastCalledWith(context, expect.any(String), { intent: "answer", answerMode }, expect.any(AbortSignal)));
+      await waitFor(() => expect(api.executeAssistant).toHaveBeenLastCalledWith(context, skill, expect.any(String), expect.any(AbortSignal)));
       fireEvent.click(await screen.findByRole("button", { name: "更换报告任务" }));
     }
   });
@@ -121,7 +113,7 @@ describe("governance report assistant", () => {
     expect(await screen.findByRole("heading", { level: 3, name: "研判结论" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "研判报告任务" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "更换报告任务" })).toBeInTheDocument();
-    expect(screen.getByText("智能整理")).toBeInTheDocument();
+    expect(screen.getByText("大模型生成 · 需人工复核")).toBeInTheDocument();
     const sources = screen.getByText("依据来源").closest("details");
     expect(sources).not.toBeNull();
     expect(within(sources!).getByTitle("1".repeat(64))).toHaveTextContent("11111111…111111");
@@ -134,14 +126,14 @@ describe("governance report assistant", () => {
     render(<GovernanceRagPanel client={api} context={context} onClose={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("输入研判问题"), { target: { value: "当前还缺哪些证据？" } });
     fireEvent.click(screen.getByRole("button", { name: "生成报告" }));
-    await waitFor(() => expect(api.dispatchAssistant).toHaveBeenCalledWith(context, "当前还缺哪些证据？", { intent: "answer" }, expect.any(AbortSignal)));
+    await waitFor(() => expect(api.executeAssistant).toHaveBeenCalledWith(context, "answer_governance_question", "当前还缺哪些证据？", expect.any(AbortSignal)));
   });
 
   it("aborts and discards an old report when the selected object changes", async () => {
     const api = client();
-    const pending = deferred<Awaited<ReturnType<GovernanceSkillsClientLike["dispatchAssistant"]>>>();
+    const pending = deferred<Awaited<ReturnType<GovernanceSkillsClientLike["executeAssistant"]>>>();
     let signal: AbortSignal | undefined;
-    vi.mocked(api.dispatchAssistant).mockImplementationOnce((_context, _message, _options, requestSignal) => {
+    vi.mocked(api.executeAssistant).mockImplementationOnce((_context, _skill, _message, requestSignal) => {
       signal = requestSignal;
       return pending.promise;
     });
@@ -154,17 +146,13 @@ describe("governance report assistant", () => {
     expect(screen.getByRole("status")).toHaveTextContent("对象已变化，上一结果已安全清除");
     await act(async () => {
       pending.resolve({
-        schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-        dispatchId: `governance-dispatch-${"0".repeat(32)}`,
-        intent: "answer",
-        answerMode: "overview",
-        status: "completed",
+        schemaVersion: ASSISTANT_SKILL_RESULT_SCHEMA,
+        executionId: `assistant-exec-${"0".repeat(32)}`,
+        skill: "generate_global_situation_report",
         answer: "旧对象报告不得显示",
         result: {},
-        deterministicFallback: false,
-        confirmation: null,
-        navigation: null,
         skillCalls: [],
+        evidenceRefs: [],
         citedHashes: [],
         auditHash: "0".repeat(64),
       });
@@ -175,9 +163,9 @@ describe("governance report assistant", () => {
 
   it("invalidates an in-flight report when the current case revision changes", async () => {
     const api = client();
-    const pending = deferred<Awaited<ReturnType<GovernanceSkillsClientLike["dispatchAssistant"]>>>();
+    const pending = deferred<Awaited<ReturnType<GovernanceSkillsClientLike["executeAssistant"]>>>();
     let signal: AbortSignal | undefined;
-    vi.mocked(api.dispatchAssistant).mockImplementationOnce((_context, _message, _options, requestSignal) => {
+    vi.mocked(api.executeAssistant).mockImplementationOnce((_context, _skill, _message, requestSignal) => {
       signal = requestSignal;
       return pending.promise;
     });

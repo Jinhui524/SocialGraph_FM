@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
+  ASSISTANT_PUBLIC_SKILLS,
+  ASSISTANT_SKILLS_SCHEMA,
+  ASSISTANT_SKILL_REQUEST_SCHEMA,
+  ASSISTANT_SKILL_RESULT_SCHEMA,
+  ASSISTANT_SKILL_POLICIES,
   GOVERNANCE_PUBLIC_SKILLS,
   GOVERNANCE_SKILLS_SCHEMA,
   type GovernanceSkillsContext,
@@ -29,222 +33,92 @@ function response(body: unknown): Response {
 }
 
 describe("SocialGraph-FM Governance Skills browser client", () => {
-  it("dispatches only bounded identities and selected target context", async () => {
+  it("executes one named read-only Assistant Skill with bounded context", async () => {
     const fetcher = vi.fn(async () => response({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-      dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-      intent: "start_analysis",
-      answerMode: null,
-      status: "confirmation_required",
-      answer: "请确认开始分析。",
-      result: { plan: { topK: 50 } },
-      deterministicFallback: true,
-      confirmation: {
-        token: `governance-confirm-${"5".repeat(64)}`,
-        action: "run_governance_analysis",
-        requestDigest: "6".repeat(64),
-        expiresAt: "2026-08-19T12:00:00Z",
-      },
-      navigation: null,
-      skillCalls: [],
+      schemaVersion: ASSISTANT_SKILL_RESULT_SCHEMA,
+      executionId: `assistant-exec-${"4".repeat(32)}`,
+      skill: "generate_global_situation_report",
+      answer: "## 全局态势报告\n\n请人工复核。",
+      result: { runId: context.runId },
+      skillCalls: [{ skill: "inspect_graph", requestHash: "6".repeat(64), resultHash: "7".repeat(64) }],
+      evidenceRefs: [{ label: "图谱概况", sourceKind: "skill", hash: "9".repeat(64) }],
       citedHashes: ["7".repeat(64)],
       auditHash: "8".repeat(64),
     }));
     const client = new GovernanceSkillsClient("http://api.test/api/v2/gfm/governance", fetcher as unknown as typeof fetch);
 
-    await expect(client.dispatchAssistant(context, "  开始分析  ", { topK: 50 })).resolves.toMatchObject({
-      intent: "start_analysis",
-      status: "confirmation_required",
-      confirmation: { action: "run_governance_analysis" },
+    await expect(client.executeAssistant(context, "generate_global_situation_report", "  生成态势报告  ")).resolves.toMatchObject({
+      skill: "generate_global_situation_report",
+      answer: expect.stringContaining("全局态势报告"),
+      skillCalls: [{ skill: "inspect_graph" }],
     });
 
     const call = fetcher.mock.calls[0] as unknown as [string, RequestInit];
-    expect(call[0]).toBe("http://api.test/api/v2/gfm/governance/assistant/dispatch");
+    expect(call[0]).toBe("http://api.test/api/v2/gfm/governance/assistant/execute");
     const body = JSON.parse(String(call[1].body));
     expect(body).toEqual({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
+      schemaVersion: ASSISTANT_SKILL_REQUEST_SCHEMA,
+      skill: "generate_global_situation_report",
       graph: context.graph,
       model: context.model,
-      message: "开始分析",
+      message: "生成态势报告",
       context: {
         runId: context.runId,
         caseId: context.caseId,
         caseHash: context.caseHash,
         selectedTarget: { targetType: "node", targetId: "node-a" },
-        topK: 50,
+        topK: 100,
       },
     });
     expect(JSON.stringify(body)).not.toContain("findings");
     expect(JSON.stringify(body)).not.toContain("textFeatures");
   });
 
-  it("sends a closed intent override for system-generated summaries", async () => {
+  it("accepts only the complete ordered Assistant Skill catalog", async () => {
     const fetcher = vi.fn(async () => response({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-      dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-      intent: "answer",
-      answerMode: "analysis_summary",
-      status: "completed",
-      answer: "## 治理摘要\n已完成分析。",
-      result: {},
-      deterministicFallback: true,
-      generationMode: "deterministic_report",
-      fallbackPhase: "narration",
-      reasonCode: "LLM_DOWN",
-      evidenceRefs: [{ label: "分析结果 · 图谱检查", sourceKind: "skill", hash: "9".repeat(64) }],
-      confirmation: null,
-      navigation: null,
-      skillCalls: [{ skill: "inspect_graph", requestHash: "6".repeat(64), resultHash: "7".repeat(64) }],
-      citedHashes: [],
-      auditHash: "8".repeat(64),
+      schemaVersion: ASSISTANT_SKILLS_SCHEMA,
+      items: ASSISTANT_SKILL_POLICIES.map((policy) => ({
+        ...policy,
+      })),
+      catalogHash: HASH,
     }));
     const client = new GovernanceSkillsClient("http://api.test/api/v2/gfm/governance", fetcher as unknown as typeof fetch);
 
-    await expect(client.dispatchAssistant(context, "请概括本次治理分析结论。", { intent: "answer", answerMode: "analysis_summary", narrationMode: "deterministic_only" }))
-      .resolves.toMatchObject({
-        answerMode: "analysis_summary",
-        generationMode: "deterministic_report",
-        fallbackPhase: "narration",
-        reasonCode: "LLM_DOWN",
-        evidenceRefs: [{ label: "分析结果 · 图谱检查", sourceKind: "skill" }],
-        skillCalls: [{ skill: "inspect_graph" }],
-      });
-
+    await expect(client.assistantCatalog()).resolves.toMatchObject({ items: expect.arrayContaining([
+      expect.objectContaining({ name: "summarize_node_evidence", readOnly: true }),
+      expect.objectContaining({ name: "generate_case_review_draft", confirmationRequired: false }),
+    ]) });
     const call = fetcher.mock.calls[0] as unknown as [string, RequestInit];
-    expect(JSON.parse(String(call[1].body))).toMatchObject({
-      intent: "answer",
-      answerMode: "analysis_summary",
-      narrationMode: "deterministic_only",
-      message: "请概括本次治理分析结论。",
-    });
+    expect(call[0]).toBe("http://api.test/api/v2/gfm/governance/assistant/skills");
   });
 
-  it("keeps same-version legacy dispatch responses compatible", async () => {
+  it("rejects Assistant catalog order and permission drift", async () => {
     const fetcher = vi.fn(async () => response({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-      dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-      intent: "answer",
-      status: "completed",
-      answer: "## 治理摘要\n旧服务回答。",
-      result: {},
-      deterministicFallback: true,
-      confirmation: null,
-      navigation: null,
-      citedHashes: [],
-      auditHash: "8".repeat(64),
-    }));
-    const client = new GovernanceSkillsClient(
-      "http://api.test/api/v2/gfm/governance",
-      fetcher as unknown as typeof fetch,
-    );
-
-    await expect(client.dispatchAssistant(context, "请概括治理风险"))
-      .resolves.toMatchObject({ answerMode: "overview", skillCalls: [] });
-  });
-
-  it.each([
-    ["start_analysis", "submit_review"],
-    ["submit_review", "run_governance_analysis"],
-    ["draft_report", "submit_review"],
-  ])("rejects a %s dispatch carrying the wrong %s confirmation", async (intent, action) => {
-    const fetcher = vi.fn(async () => response({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-      dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-      intent,
-      answerMode: null,
-      status: "confirmation_required",
-      answer: "需要确认。",
-      result: {},
-      deterministicFallback: true,
-      confirmation: {
-        token: `governance-confirm-${"5".repeat(64)}`,
-        action,
-        requestDigest: "6".repeat(64),
-        expiresAt: "2026-08-19T12:00:00Z",
-      },
-      navigation: null,
-      skillCalls: [],
-      citedHashes: [],
-      auditHash: "8".repeat(64),
+      schemaVersion: ASSISTANT_SKILLS_SCHEMA,
+      items: [...ASSISTANT_SKILL_POLICIES].reverse().map((policy) => ({
+        ...policy,
+      })),
+      catalogHash: HASH,
     }));
     const client = new GovernanceSkillsClient("http://api.test/api/v2/gfm/governance", fetcher as unknown as typeof fetch);
-    await expect(client.dispatchAssistant(context, "继续")).rejects.toMatchObject({
+    await expect(client.assistantCatalog()).rejects.toMatchObject({
       code: "GFM_GOVERNANCE_SKILLS_RESPONSE_INVALID",
     });
   });
 
-  it("rejects navigation unless it belongs to a completed open-review intent", async () => {
+  it("rejects fallback-shaped Assistant responses", async () => {
     const fetcher = vi.fn(async () => response({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
+      schemaVersion: "socialgraph-fm.governance-assistant-dispatch/1.0",
       dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-      intent: "answer",
-      answerMode: "review_guidance",
-      status: "completed",
       answer: "回答。",
       result: {},
-      deterministicFallback: true,
-      confirmation: null,
-      navigation: {
-        view: "governance_review",
-        runId: context.runId,
-        caseId: context.caseId,
-        target: { targetType: "node", targetId: "node-a" },
-      },
       skillCalls: [],
+      evidenceRefs: [],
       citedHashes: [],
       auditHash: "8".repeat(64),
     }));
     const client = new GovernanceSkillsClient("http://api.test/api/v2/gfm/governance", fetcher as unknown as typeof fetch);
-    await expect(client.dispatchAssistant(context, "回答问题")).rejects.toMatchObject({
-      code: "GFM_GOVERNANCE_SKILLS_RESPONSE_INVALID",
-    });
-  });
-
-  it("accepts a completed open-review navigation bound to the exact target", async () => {
-    const fetcher = vi.fn(async () => response({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-      dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-      intent: "open_review",
-      answerMode: null,
-      status: "completed",
-      answer: "已打开复核。",
-      result: {},
-      deterministicFallback: true,
-      confirmation: null,
-      navigation: {
-        view: "governance_review",
-        runId: context.runId,
-        caseId: context.caseId,
-        target: { targetType: "node", targetId: "node-a" },
-      },
-      skillCalls: [],
-      citedHashes: [],
-      auditHash: "8".repeat(64),
-    }));
-    const client = new GovernanceSkillsClient("http://api.test/api/v2/gfm/governance", fetcher as unknown as typeof fetch);
-    await expect(client.dispatchAssistant(context, "打开复核")).resolves.toMatchObject({
-      navigation: { view: "governance_review", target: { targetType: "node", targetId: "node-a" } },
-    });
-  });
-
-  it("rejects a completed open-review dispatch without navigation", async () => {
-    const fetcher = vi.fn(async () => response({
-      schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-      dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-      intent: "open_review",
-      answerMode: null,
-      status: "completed",
-      answer: "已打开复核。",
-      result: {},
-      deterministicFallback: true,
-      confirmation: null,
-      navigation: null,
-      skillCalls: [],
-      citedHashes: [],
-      auditHash: "8".repeat(64),
-    }));
-    const client = new GovernanceSkillsClient("http://api.test/api/v2/gfm/governance", fetcher as unknown as typeof fetch);
-    await expect(client.dispatchAssistant(context, "打开复核")).rejects.toMatchObject({
+    await expect(client.executeAssistant(context, "answer_governance_question", "回答问题")).rejects.toMatchObject({
       code: "GFM_GOVERNANCE_SKILLS_RESPONSE_INVALID",
     });
   });
@@ -312,28 +186,6 @@ describe("SocialGraph-FM Governance Skills browser client", () => {
       model: context.model,
       query: "Russia model evidence",
       limit: 5,
-    });
-  });
-
-  it("sends bounded assistant context and validates citations", async () => {
-    const fetcher = vi.fn(async () => response({
-      schemaVersion: "socialgraph-fm.governance-assistant/1.0",
-      turnId: `governance-turn-${"4".repeat(32)}`,
-      answer: "Verified answer",
-      deterministicFallback: false,
-      skillCalls: [{ skill: "inspect_graph", requestHash: "d".repeat(64), resultHash: "e".repeat(64) }],
-      citedHashes: ["f".repeat(64)],
-      auditHash: "0".repeat(64),
-    }));
-    const client = new GovernanceSkillsClient("http://api.test/api/v2/gfm/governance", fetcher as unknown as typeof fetch);
-    await expect(client.assistantTurn(context, "  What supports this?  ")).resolves.toMatchObject({ answer: "Verified answer", skillCalls: [{ skill: "inspect_graph" }] });
-    const call = fetcher.mock.calls[0] as unknown as [string, RequestInit];
-    expect(call[0]).toBe("http://api.test/api/v2/gfm/governance/assistant/turn");
-    expect(JSON.parse(String(call[1].body))).toMatchObject({
-      graph: context.graph,
-      model: context.model,
-      message: "What supports this?",
-      context: { runId: context.runId, caseId: context.caseId, selectedNodeIds: ["node-a", "node-b"] },
     });
   });
 

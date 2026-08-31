@@ -8,10 +8,9 @@ from .gfm_client import GfmProxyError
 from .gfm_governance_routes import PREFIX
 from .governance_skills import GovernanceSkillsGateway
 from .governance_skills_schemas import (
-    AssistantDispatchRequest,
-    AssistantDispatchResponse,
-    AssistantTurnRequest,
-    AssistantTurnResponse,
+    AssistantSkillCatalog,
+    AssistantSkillExecuteRequest,
+    AssistantSkillExecutionResponse,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
     SimilarCasesSearchRequest,
@@ -24,10 +23,25 @@ from .governance_skills_schemas import (
     SkillInvocationRequest,
     SkillName,
 )
+from .provider import ProviderFailure
 
 
 def _proxy(error: GfmProxyError) -> HTTPException:
     return HTTPException(status_code=error.status_code, detail={"code": error.code})
+
+
+def _provider_proxy(error: ProviderFailure) -> HTTPException:
+    unavailable = {
+        "LLM_NOT_CONFIGURED",
+        "LLM_TIMEOUT",
+        "LLM_NETWORK_ERROR",
+        "LLM_RATE_LIMITED",
+        "LLM_UPSTREAM_ERROR",
+    }
+    return HTTPException(
+        status_code=503 if error.retryable or error.code in unavailable else 502,
+        detail={"code": error.code},
+    )
 
 
 def build_governance_skills_router(gateway: GovernanceSkillsGateway) -> APIRouter:
@@ -67,19 +81,20 @@ def build_governance_skills_router(gateway: GovernanceSkillsGateway) -> APIRoute
         except GfmProxyError as error:
             raise _proxy(error) from error
 
-    @router.post("/assistant/turn", response_model=AssistantTurnResponse)
-    async def assistant_turn(body: AssistantTurnRequest) -> AssistantTurnResponse:
-        try:
-            return await gateway.assistant_turn(body)
-        except GfmProxyError as error:
-            raise _proxy(error) from error
+    @router.get("/assistant/skills", response_model=AssistantSkillCatalog)
+    async def assistant_catalog() -> AssistantSkillCatalog:
+        return gateway.assistant_catalog()
 
-    @router.post("/assistant/dispatch", response_model=AssistantDispatchResponse)
-    async def assistant_dispatch(body: AssistantDispatchRequest) -> AssistantDispatchResponse:
+    @router.post("/assistant/execute", response_model=AssistantSkillExecutionResponse)
+    async def assistant_execute(
+        body: AssistantSkillExecuteRequest,
+    ) -> AssistantSkillExecutionResponse:
         try:
-            return await gateway.assistant_dispatch(body)
+            return await gateway.assistant_execute(body)
         except GfmProxyError as error:
             raise _proxy(error) from error
+        except ProviderFailure as error:
+            raise _provider_proxy(error) from error
 
     @router.post("/similar-cases/search", response_model=SimilarCasesSearchResponse)
     async def search_similar_cases(

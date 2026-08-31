@@ -16,20 +16,15 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = [
-  "ogb==1.3.6",
   "pyg-lib==0.6.0",
   "torch==2.8.0",
   "torch-geometric==2.8.0.post1",
 ]
-cu130 = [
+research = [
   "ogb==1.3.6",
-  "pyg-lib==0.7.0",
-  "torch==2.12.0",
-  "torch-geometric==2.8.0.post1",
-  "torch-scatter==2.1.2; platform_system == 'Linux'",
-  "torch-sparse==0.6.18; platform_system == 'Linux'",
-]
-text = [
+  "pandas>=2.2,<4",
+  "scikit-learn>=1.5,<2",
+  "scipy>=1.14,<2",
   "FlagEmbedding==1.4.0",
   "transformers==5.14.1",
 ]
@@ -38,15 +33,10 @@ dev = [
   "ruff==0.13.2",
   "mypy==1.18.2",
 ]
-# Compatibility aliases retained for existing developer commands.
 test = [
   "pytest==9.0.3",
   "ruff==0.13.2",
   "mypy==1.18.2",
-]
-gfm-text = [
-  "FlagEmbedding==1.4.0",
-  "transformers==5.14.1",
 ]
 
 [project.scripts]
@@ -63,17 +53,10 @@ packages = ["src/socialgraph_gfm"]
 [tool.hatch.build.targets.wheel.force-include]
 "constraints" = "socialgraph_gfm/resources/constraints"
 "locks/runtime-lock-manifest.json" = "socialgraph_gfm/resources/runtime-lock-manifest.json"
-"locks/windows-cpu.requirements.txt" = "socialgraph_gfm/resources/locks/windows-cpu.requirements.txt"
-"locks/windows-cu130.requirements.txt" = "socialgraph_gfm/resources/locks/windows-cu130.requirements.txt"
-"locks/windows-cu130-gfm.requirements.txt" = "socialgraph_gfm/resources/locks/windows-cu130-gfm.requirements.txt"
-"locks/linux-cu130.requirements.txt" = "socialgraph_gfm/resources/locks/linux-cu130.requirements.txt"
 "locks/cpu-ci.requirements.txt" = "socialgraph_gfm/resources/locks/cpu-ci.requirements.txt"
 "locks/install-lock-manifest.json" = "socialgraph_gfm/resources/install-lock-manifest.json"
 "locks/install-windows-x86_64-cpu-pt28.requirements.txt" = "socialgraph_gfm/resources/locks/install-windows-x86_64-cpu-pt28.requirements.txt"
 "locks/install-linux-x86_64-cpu-pt28.requirements.txt" = "socialgraph_gfm/resources/locks/install-linux-x86_64-cpu-pt28.requirements.txt"
-"locks/install-macos-arm64-cpu-pt28.requirements.txt" = "socialgraph_gfm/resources/locks/install-macos-arm64-cpu-pt28.requirements.txt"
-"locks/install-windows-x86_64-cu130-pt212.requirements.txt" = "socialgraph_gfm/resources/locks/install-windows-x86_64-cu130-pt212.requirements.txt"
-"locks/install-linux-x86_64-cu130-pt212.requirements.txt" = "socialgraph_gfm/resources/locks/install-linux-x86_64-cu130-pt212.requirements.txt"
 "runtime-profiles.json" = "socialgraph_gfm/resources/runtime-profiles.json"
 "install-profiles.json" = "socialgraph_gfm/resources/install-profiles.json"
 "contracts/public-contracts.schema.json" = "socialgraph_gfm/resources/public-contracts.schema.json"

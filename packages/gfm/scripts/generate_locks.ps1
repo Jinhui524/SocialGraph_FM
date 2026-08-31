@@ -28,20 +28,18 @@ $profiles = @(
     "locks\windows-cpu.requirements.txt", "https://data.pyg.org/whl/torch-2.8.0+cpu.html"
   ),
   @(
-    "constraints\windows-cu130.txt", "x86_64-pc-windows-msvc", "cu130",
-    "locks\windows-cu130.requirements.txt", "https://data.pyg.org/whl/torch-2.12.0+cu130.html"
-  ),
-  @(
-    "constraints\windows-cu130-gfm.txt", "x86_64-pc-windows-msvc", "cu130",
-    "locks\windows-cu130-gfm.requirements.txt", "https://data.pyg.org/whl/torch-2.12.0+cu130.html"
-  ),
-  @(
-    "constraints\linux-cu130.txt", "x86_64-unknown-linux-gnu", "cu130",
-    "locks\linux-cu130.requirements.txt", "https://data.pyg.org/whl/torch-2.12.0+cu130.html"
-  ),
-  @(
     "constraints\cpu-ci.txt", "x86_64-unknown-linux-gnu", "cpu",
     "locks\cpu-ci.requirements.txt", "https://data.pyg.org/whl/torch-2.8.0+cpu.html"
+  ),
+  @(
+    "constraints\public-runtime.in", "x86_64-pc-windows-msvc", "cpu",
+    "locks\install-windows-x86_64-cpu-pt28.requirements.txt",
+    "https://data.pyg.org/whl/torch-2.8.0+cpu.html"
+  ),
+  @(
+    "constraints\public-runtime.in", "x86_64-unknown-linux-gnu", "cpu",
+    "locks\install-linux-x86_64-cpu-pt28.requirements.txt",
+    "https://data.pyg.org/whl/torch-2.8.0+cpu.html"
   )
 )
 

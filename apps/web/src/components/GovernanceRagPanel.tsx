@@ -14,13 +14,24 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 
 import { SocialGraphApiError } from "../services/apiClient";
-import type {
-  GovernanceAssistantDispatchResponse,
-  GovernanceAnswerMode,
-  GovernanceSimilarCasesResponse,
-  GovernanceSkillsClientLike,
-  GovernanceSkillsContext,
+import {
+  ASSISTANT_SKILL_POLICIES,
+  type AssistantSkillName,
+  type AssistantSkillResult,
+  type GovernanceSimilarCasesResponse,
+  type GovernanceSkillsClientLike,
+  type GovernanceSkillsContext,
 } from "../types/governanceSkills";
+/*
+ * Labels and descriptions come from the generated Assistant catalog contract;
+ * report prompts stay UI-specific and never select a different Skill at runtime.
+ */
+function assistantPresentation(skill: AssistantSkillName) {
+  const item = ASSISTANT_SKILL_POLICIES.find((candidate) => candidate.name === skill);
+  if (!item) throw new Error(`Missing Assistant Skill presentation: ${skill}`);
+  return item;
+}
+
 import { SafeMarkdown } from "./SafeMarkdown";
 
 type PanelView = "assistant" | "cases";
@@ -50,43 +61,43 @@ const REPORT_TASKS: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
   readonly prompt: string;
-  readonly answerMode: GovernanceAnswerMode;
+  readonly skill: AssistantSkillName;
   readonly requires: "run" | "node" | "case";
   readonly Icon: typeof Graph;
 }> = [
   {
     id: "overview",
-    label: "全局态势报告",
-    description: "整理重点风险节点与人工复核顺序",
+    label: assistantPresentation("generate_global_situation_report").label,
+    description: assistantPresentation("generate_global_situation_report").description,
     prompt: "请生成当前网络的全局态势报告，重点列出高关注候选、关系证据和下一步人工复核顺序，不输出风险分布概览。",
-    answerMode: "analysis_summary",
+    skill: "generate_global_situation_report",
     requires: "run",
     Icon: Graph,
   },
   {
     id: "node",
-    label: "当前账号证据报告",
-    description: "区分事实、模型信号与待补证据",
+    label: assistantPresentation("generate_account_evidence_report").label,
+    description: assistantPresentation("generate_account_evidence_report").description,
     prompt: "请生成当前选中账号的证据报告，区分已登记事实、模型风险排序、结构线索和仍需补充核验的信息。",
-    answerMode: "evidence_requirements",
+    skill: "generate_account_evidence_report",
     requires: "node",
     Icon: ShieldCheck,
   },
   {
     id: "coordination",
-    label: "群组与关系研判报告",
-    description: "核对风险群组、事实关系与潜在线索",
+    label: assistantPresentation("generate_coordination_report").label,
+    description: assistantPresentation("generate_coordination_report").description,
     prompt: "请生成群组与关系研判报告，分别说明风险群组、事实关系与未登记为事实边的潜在线索，并给出核验顺序。",
-    answerMode: "coordination_summary",
+    skill: "generate_coordination_report",
     requires: "run",
     Icon: UsersThree,
   },
   {
     id: "draft",
-    label: "人工研判草稿",
-    description: "形成可继续修订的研判单草稿",
+    label: assistantPresentation("generate_case_review_draft").label,
+    description: assistantPresentation("generate_case_review_draft").description,
     prompt: "请基于当前研判单生成一份人工研判草稿，严格区分图事实、模型发现、派生线索和人工结论。",
-    answerMode: "case_draft",
+    skill: "generate_case_review_draft",
     requires: "case",
     Icon: TreeStructure,
   },
@@ -198,7 +209,7 @@ export function GovernanceRagPanel({ client, context, onClose, embedded = false 
   const [assistantMessage, setAssistantMessage] = useState("");
   const [activeReportTask, setActiveReportTask] = useState<ReportTask | null>(null);
   const [showReportTasks, setShowReportTasks] = useState(true);
-  const [assistant, setAssistant] = useState<RequestState<GovernanceAssistantDispatchResponse>>({ state: "idle" });
+  const [assistant, setAssistant] = useState<RequestState<AssistantSkillResult>>({ state: "idle" });
   const [similar, setSimilar] = useState<RequestState<GovernanceSimilarCasesResponse>>({ state: "idle" });
   const [resetNotice, setResetNotice] = useState<string | null>(null);
   const contextOwnerRef = useRef<ContextOwner>({ key: contextKey, epoch: 0 });
@@ -267,10 +278,12 @@ export function GovernanceRagPanel({ client, context, onClose, embedded = false 
     setActiveReportTask(task?.id ?? null);
     setAssistant({ state: "loading" });
     setShowReportTasks(false);
-    client.dispatchAssistant(context, message, {
-      intent: "answer",
-      ...(task ? { answerMode: task.answerMode } : {}),
-    }, request.controller.signal)
+    client.executeAssistant(
+      context,
+      task?.skill ?? "answer_governance_question",
+      message,
+      request.controller.signal,
+    )
       .then((value) => { if (isActiveRequest(request)) setAssistant({ state: "ready", value }); })
       .catch((error) => { if (isActiveRequest(request)) setAssistant({ state: "error", message: describeError(error) }); });
   };
@@ -338,7 +351,7 @@ export function GovernanceRagPanel({ client, context, onClose, embedded = false 
       <div className="governance-report-document">
         {assistant.state === "loading" ? <p className="governance-report-progress"><CircleNotch className="spin" />正在核对事实、模型信号与登记资料…</p> : null}
         {assistant.state === "error" ? <p className="is-error">{assistant.message} 当前图谱与复核记录未被修改，可以稍后重试。</p> : null}
-        {assistant.state === "ready" ? <article className="governance-assistant-answer"><header><div><strong>{REPORT_TASKS.find((task) => task.id === activeReportTask)?.label ?? "研判报告"}</strong><span>{assistant.value.generationMode === "deterministic_report" || assistant.value.deterministicFallback ? "本地可审计报告" : "智能整理"}</span></div></header><div className="governance-report-page"><SafeMarkdown text={assistant.value.answer} /><details className="governance-report-trace"><summary><ShieldCheck />依据来源</summary>{assistant.value.skillCalls.length ? <ul>{assistant.value.skillCalls.map((trace, index) => <li key={`${trace.skill}-${index}`}><CheckCircle /><span>{TRACE_LABELS[trace.skill] ?? "只读分析"}</span><code title={trace.resultHash}>{shortHash(trace.resultHash)}</code></li>)}</ul> : <p>本次回答依据当前绑定上下文生成，未执行额外只读调用。</p>}{assistant.value.evidenceRefs?.length ? <div className="governance-report-sources">{assistant.value.evidenceRefs.map((reference, index) => <span key={`${reference.hash}-${index}`} title={reference.hash}>{reference.label} · {shortHash(reference.hash)}</span>)}</div> : null}{assistant.value.citedHashes.length ? <div className="governance-report-sources">{assistant.value.citedHashes.map((hash) => <span key={hash} title={hash}>来源指纹 · {shortHash(hash)}</span>)}</div> : null}</details></div></article> : null}
+        {assistant.state === "ready" ? <article className="governance-assistant-answer"><header><div><strong>{REPORT_TASKS.find((task) => task.id === activeReportTask)?.label ?? "研判报告"}</strong><span>大模型生成 · 需人工复核</span></div></header><div className="governance-report-page"><SafeMarkdown text={assistant.value.answer} /><details className="governance-report-trace"><summary><ShieldCheck />依据来源</summary>{assistant.value.skillCalls.length ? <ul>{assistant.value.skillCalls.map((trace, index) => <li key={`${trace.skill}-${index}`}><CheckCircle /><span>{TRACE_LABELS[trace.skill] ?? "只读分析"}</span><code title={trace.resultHash}>{shortHash(trace.resultHash)}</code></li>)}</ul> : <p>本次回答依据当前绑定上下文生成，未执行额外只读调用。</p>}{assistant.value.evidenceRefs.length ? <div className="governance-report-sources">{assistant.value.evidenceRefs.map((reference, index) => <span key={`${reference.hash}-${index}`} title={reference.hash}>{reference.label} · {shortHash(reference.hash)}</span>)}</div> : null}{assistant.value.citedHashes.length ? <div className="governance-report-sources">{assistant.value.citedHashes.map((hash) => <span key={hash} title={hash}>来源指纹 · {shortHash(hash)}</span>)}</div> : null}</details></div></article> : null}
       </div></>}
       </div>
 

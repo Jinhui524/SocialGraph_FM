@@ -184,10 +184,12 @@ export function EvidenceDossier({
       "发布时间、原帖内容和采集来源未包含在当前证据中，必须列为待补充证据。",
     ].join("\n");
     setSummary({ state: "loading", key: summaryKey });
-    summaryClient.dispatchAssistant(skillsContext, prompt, {
-      intent: "answer",
-      answerMode: "evidence_requirements",
-    }, controller.signal).then((response) => {
+    summaryClient.executeAssistant(
+      skillsContext,
+      "summarize_node_evidence",
+      prompt,
+      controller.signal,
+    ).then((response) => {
       if (controller.signal.aborted || requestRef.current !== controller) return;
       if (requestTimeoutRef.current !== null) window.clearTimeout(requestTimeoutRef.current);
       requestTimeoutRef.current = null;
@@ -269,7 +271,7 @@ export function EvidenceDossier({
             {summary.state === "loading" ? <p role="status"><CircleNotch className="spin" />正在组织证据摘要…</p> : null}
             {summary.state === "error" ? <p className="is-error" role="status"><WarningCircle />{summary.message}</p> : null}
             {summary.state !== "ready" ? <button type="button" disabled={!summaryClient || !skillsContext || !readyEvidence || summary.state === "loading"} onClick={requestSummary}><Sparkle />{summary.state === "error" ? "重新生成证据研判摘要" : "生成证据研判摘要"}</button> : null}
-            {!summaryClient ? <small>当前未连接智能整理服务，结构化证据可正常使用。</small> : !readyEvidence ? <small>关系事实读取完成后即可生成摘要。</small> : null}
+            {!summaryClient ? <small>大模型服务未就绪，无法生成智能证据研判。</small> : !readyEvidence ? <small>关系事实读取完成后即可生成摘要。</small> : null}
           </section> : <p className="governance-dossier-boundary">群组和关系使用绑定派生结果，不生成目标级大模型解释，避免将全局分析误写为对象证据。</p>}
         </section> : null}
 

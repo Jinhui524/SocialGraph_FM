@@ -32,36 +32,19 @@ REQUIRED_VERSIONS = {
     "python": "3.12",
     "pydantic": "2.13.4",
     "numpy": "2.3.3",
-    "torch": "2.12.0",
+    "torch": "2.8.0",
     "torch_geometric": "2.8.0.post1",
-    "ogb": "1.3.6",
 }
 EXTENSION_VERSIONS = {
-    "pyg_lib": "0.7.0",
-    "torch_scatter": "2.1.2",
-    "torch_sparse": "0.6.18",
+    "pyg_lib": "0.6.0",
 }
 PROFILE_LOCAL_VERSIONS = {
     "cpu-ci": {"torch": "2.8.0+cpu", "pyg_lib": "0.6.0+pt28cpu"},
     "windows-cpu": {"torch": "2.8.0+cpu", "pyg_lib": "0.6.0+pt28cpu"},
-    "macos-arm64-cpu": {"torch": "2.8.0", "pyg_lib": "0.6.0+pt28"},
-    "windows-cu130": {
-        "torch": "2.12.0+cu130",
-        "pyg_lib": "0.7.0+pt212cu130",
-    },
-    "linux-cu130": {
-        "torch": "2.12.0+cu130",
-        "pyg_lib": "0.7.0+pt212cu130",
-        "torch_scatter": "2.1.2+pt212cu130",
-        "torch_sparse": "0.6.18+pt212cu130",
-    },
 }
 INSTALL_PROFILE_IDS = {
     "cpu-ci": "linux-x86_64-cpu-pt28",
     "windows-cpu": "windows-x86_64-cpu-pt28",
-    "macos-arm64-cpu": "macos-arm64-cpu-pt28",
-    "windows-cu130": "windows-x86_64-cu130-pt212",
-    "linux-cu130": "linux-x86_64-cu130-pt212",
 }
 GFM_OPTIONAL_VERSIONS = {
     "FlagEmbedding": "1.4.0",
@@ -374,7 +357,7 @@ def gfm_optional_runtime_report() -> dict[str, Any]:
     """Report optional corpus/text packages without weakening base runtime readiness."""
 
     installed: dict[str, str | None] = {}
-    for distribution, expected in GFM_OPTIONAL_VERSIONS.items():
+    for distribution in GFM_OPTIONAL_VERSIONS:
         try:
             installed[distribution] = importlib.metadata.version(distribution)
         except importlib.metadata.PackageNotFoundError:
@@ -411,7 +394,6 @@ def runtime_report(device: str = "cpu") -> dict[str, Any]:
         raise ValueError("device must be cpu or cuda")
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     torch_version = _version("torch")
-    cuda_wheel_installed = bool(torch_version and "+cu130" in torch_version)
     system = platform.system()
     raw_machine = platform.machine()
     normalized_machine = {
@@ -423,38 +405,27 @@ def runtime_report(device: str = "cpu") -> dict[str, Any]:
     libc_name, libc_version = platform.libc_ver()
     platform_mismatch: dict[str, str] | None = None
     selected_profile: str | None = None
-    if device == "cuda" or cuda_wheel_installed:
-        if system == "Windows" and normalized_machine == "x86_64":
-            selected_profile = "windows-cu130"
-        elif system == "Linux" and normalized_machine == "x86_64" and libc_name == "glibc":
-            selected_profile = "linux-cu130"
-        else:
-            platform_mismatch = {
-                "package": "platform",
-                "required": "Windows/Linux glibc x86_64 for CUDA 13.0",
-                "actual": f"{system}/{normalized_machine}/{libc_name or 'unknown-libc'}",
-            }
+    if device == "cuda":
+        platform_mismatch = {
+            "package": "device",
+            "required": "cpu",
+            "actual": "cuda",
+        }
     elif system == "Windows" and normalized_machine == "x86_64":
         selected_profile = "windows-cpu"
     elif system == "Linux" and normalized_machine == "x86_64" and libc_name == "glibc":
         selected_profile = "cpu-ci"
-    elif system == "Darwin" and normalized_machine == "arm64":
-        selected_profile = "macos-arm64-cpu"
     else:
         platform_mismatch = {
             "package": "platform",
-            "required": "Windows/Linux x86_64 or macOS arm64",
+            "required": "Windows x86_64 or Linux glibc x86_64",
             "actual": f"{system}/{normalized_machine}/{libc_name or 'none'}",
         }
 
-    # Keep reporting useful dependency diagnostics even on an unsupported host.
-    # The fallback is not considered ready because platform_mismatch is retained.
-    version_profile = selected_profile or (
-        "windows-cu130" if device == "cuda" or cuda_wheel_installed else "windows-cpu"
-    )
-    required_modules = ["pydantic", "numpy", "torch", "torch_geometric", "ogb", "pyg_lib"]
-    if selected_profile == "linux-cu130":
-        required_modules.extend(("torch_scatter", "torch_sparse"))
+    # Keep reporting useful dependency diagnostics on unsupported hosts while
+    # retaining the fail-closed mismatch above.
+    version_profile = selected_profile or "windows-cpu"
+    required_modules = ["pydantic", "numpy", "torch", "torch_geometric", "pyg_lib"]
     versions: dict[str, str | None] = {
         "python": python_version,
         **{
@@ -474,26 +445,10 @@ def runtime_report(device: str = "cpu") -> dict[str, Any]:
         if actual is not None and required is not None and actual != required:
             mismatches.append({"package": name, "required": required, "actual": actual})
 
-    cuda: dict[str, Any] = {
-        "requested": device == "cuda",
-        "available": False,
-        "runtime": None,
-        "deviceName": None,
-    }
-    if versions["torch"] is not None:
-        import torch
-
-        cuda.update(
-            {
-                "available": bool(torch.cuda.is_available()),
-                "runtime": torch.version.cuda,
-                "deviceName": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-            }
+    if torch_version is not None and not torch_version.endswith("+cpu"):
+        mismatches.append(
+            {"package": "torch", "required": "2.8.0+cpu", "actual": torch_version}
         )
-    if device == "cuda" and not cuda["available"]:
-        mismatches.append({"package": "cuda", "required": "available", "actual": "unavailable"})
-    if device == "cuda" and cuda["runtime"] is not None and not str(cuda["runtime"]).startswith("13.0"):
-        mismatches.append({"package": "cuda", "required": "13.0", "actual": cuda["runtime"]})
 
     report: dict[str, Any] = {
         "schemaVersion": "gfm.doctor/1.0",
@@ -508,7 +463,7 @@ def runtime_report(device: str = "cpu") -> dict[str, Any]:
             "libcVersion": libc_version or None,
         },
         "versions": versions,
-        "cuda": cuda,
+        "device": "cpu",
         "missing": missing,
         "mismatches": mismatches,
     }
@@ -529,8 +484,6 @@ def require_ml_runtime(device: str = "cpu"):
             for item in report["mismatches"]
         )
         raise RuntimeVersionMismatch("Runtime does not match the selected exact profile: " + summary)
-    if device == "cuda" and not report["cuda"]["available"]:
-        raise MissingRuntimeDependency("CUDA was requested but torch.cuda.is_available() is false")
     import torch
     import torch_geometric
 

@@ -33,17 +33,14 @@ def _assert_all_records_are_hashed(path: Path) -> None:
     assert pending == ""
 
 
-def test_api_runtime_and_development_locks_are_separate_and_hashed() -> None:
-    runtime_lock = PROJECT / "requirements.lock"
+def test_api_keeps_only_a_hashed_development_lock() -> None:
     development_lock = PROJECT / "requirements-dev.lock"
-    runtime = _requirements(runtime_lock)
     development = _requirements(development_lock)
 
-    assert {"fastapi", "httpx", "numpy", "pydantic", "uvicorn"} <= runtime
-    assert DEV_DISTRIBUTIONS.isdisjoint(runtime)
+    assert not (PROJECT / "requirements.lock").exists()
+    assert not (PROJECT / "requirements.txt").exists()
+    assert {"fastapi", "httpx", "numpy", "pydantic", "uvicorn"} <= development
     assert DEV_DISTRIBUTIONS <= development
-    assert runtime < development
-    _assert_all_records_are_hashed(runtime_lock)
     _assert_all_records_are_hashed(development_lock)
 
 

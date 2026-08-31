@@ -130,7 +130,7 @@ export function parseGovernanceOnlineHealth(value: unknown): GovernanceOnlineHea
   return deepFreeze({
     schemaVersion: GOVERNANCE_ONLINE_SCHEMA, serviceIdentity: hash(item.serviceIdentity), servingReady, onlineForwardReady,
     modelVersionId: nullableText(item.modelVersionId, 200), modelVersionHash: nullableHash(item.modelVersionHash), modelStateHash: nullableHash(item.modelStateHash),
-    device: oneOf(item.device, new Set(["cpu", "cuda"])), dtype: oneOf(item.dtype, new Set(["float32", "float16", "bfloat16"])),
+    device: oneOf(item.device, new Set(["cpu"])), dtype: oneOf(item.dtype, new Set(["float32"])),
     loadedAt: nullableDate(item.loadedAt), queueDepth: integer(item.queueDepth), activeRunId: item.activeRunId === null ? null : pattern(item.activeRunId, RUN_ID),
     runtimeRecipeHash: hash(item.runtimeRecipeHash), healthHash: hash(item.healthHash),
   });

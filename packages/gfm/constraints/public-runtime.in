@@ -1,0 +1,11 @@
+fastapi==0.141.1
+httpx==0.28.1
+networkx==3.6.1
+numpy==2.3.3
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pyg-lib==0.6.0+pt28cpu
+python-multipart==0.0.32
+torch==2.8.0+cpu
+torch-geometric==2.8.0.post1
+uvicorn==0.52.4

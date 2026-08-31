@@ -12,7 +12,6 @@ $ErrorActionPreference = "Stop"
   -RuntimeRoot $RuntimeRoot `
   -GfmPython $GfmPython `
   -Operation run `
-  -DependencyProfile base `
   -PromptForWikimediaSalt `
   -SecretAction {
     param($Runtime)

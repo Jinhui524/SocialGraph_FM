@@ -31,10 +31,18 @@ async def verify_provider() -> None:
             f'Return exactly {{"{_CHECK_FIELD}":"ok"}}.',
         )
         if not _is_valid_check_result(result):
-            raise ProviderFailure(
-                "LLM_INVALID_RESPONSE",
-                "LLM connection check did not return the expected marker",
+            result = await provider.generate(
+                "You are a connection verifier. Return only one JSON object and no prose.",
+                (
+                    f'Return exactly {{"{_CHECK_FIELD}":"ok"}}. '
+                    "The previous response was structurally invalid; this is the only repair request."
+                ),
             )
+            if not _is_valid_check_result(result):
+                raise ProviderFailure(
+                    "LLM_INVALID_RESPONSE",
+                    "LLM connection check did not return the expected marker",
+                )
     finally:
         await provider.aclose()
 

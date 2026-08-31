@@ -175,7 +175,7 @@ def test_checkpoint_forward_probe_returns_a_path_free_four_protocol_summary(
         ),
     )
 
-    report = run_checkpoint_forward_probe(layout, Path("python"), device="cpu")
+    report = run_checkpoint_forward_probe(layout, Path("python"))
 
     assert [item["protocol"] for item in report["protocols"]] == [
         "global",

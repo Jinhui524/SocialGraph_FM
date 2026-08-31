@@ -23,7 +23,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .config import Settings, get_settings
 from .dataset_imports import DatasetImportService
@@ -114,7 +114,7 @@ from .gfm_core_schemas import (
 )
 from .graph_build_intents import GraphBuildIntentService
 from .normalizer import IntentNormalizerService
-from .provider import IntentProvider, OpenAICompatibleProvider
+from .provider import IntentProvider, OpenAICompatibleProvider, ProviderFailure
 from .runtime_fingerprint import (
     converter_environment_details,
     converter_environment_fingerprint,
@@ -278,14 +278,33 @@ def create_app(
     app.state.gfm_governance_gateway = gfm_governance_gateway
     app.state.gfm_governance_skills_gateway = gfm_governance_skills_gateway
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=runtime_settings.cors_origins,
-        allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "X-Request-ID"],
-        expose_headers=["X-Request-ID", "X-Isolated-Artifact-Rows"],
-    )
+    @app.exception_handler(ProviderFailure)
+    async def provider_failure_handler(
+        _: Request, error: ProviderFailure
+    ) -> JSONResponse:
+        unavailable = {
+            "LLM_NOT_CONFIGURED",
+            "LLM_TIMEOUT",
+            "LLM_NETWORK_ERROR",
+            "LLM_RATE_LIMITED",
+            "LLM_UPSTREAM_ERROR",
+        }
+        return JSONResponse(
+            status_code=(
+                503 if error.retryable or error.code in unavailable else 502
+            ),
+            content={"detail": {"code": error.code}},
+        )
+
+    if runtime_settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=runtime_settings.cors_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "X-Request-ID"],
+            expose_headers=["X-Request-ID", "X-Isolated-Artifact-Rows"],
+        )
     app.add_middleware(
         GovernanceUploadLimitMiddleware,
         max_bundle_bytes=runtime_settings.gfm_governance_bundle_max_bytes,
@@ -343,8 +362,7 @@ def create_app(
                 "/api/v2/gfm/governance/knowledge/search",
                 "/api/v2/gfm/governance/similar-cases/search",
                 "/api/v2/gfm/governance/case-index/backfill",
-                "/api/v2/gfm/governance/assistant/turn",
-                "/api/v2/gfm/governance/assistant/dispatch",
+                "/api/v2/gfm/governance/assistant/execute",
             }
             or (
                 request.url.path.startswith("/api/v2/gfm/governance/skills/")
@@ -404,14 +422,14 @@ def create_app(
         return CapabilitiesResponse(
             intentNormalization=IntentNormalizationCapability(
                 configured=configured,
-                mode="llm_with_fallback" if configured else "deterministic_fallback",
+                mode="llm_required",
                 provider="openai_compatible" if configured else None,
                 model=actual_provider.model if actual_provider else None,
-                apiMode=runtime_settings.llm_api_mode,
+                apiMode="chat_completions",
                 connectionStatus=(
                     getattr(actual_provider, "connection_status", "configured_unverified")
                     if actual_provider
-                    else "fallback"
+                    else "not_configured"
                 ),
             ),
             analysis=AnalysisCapabilities(
@@ -1074,6 +1092,35 @@ def create_app(
         )
     )
     app.include_router(build_governance_skills_router(gfm_governance_skills_gateway))
+
+    web_root_raw = os.environ.get("SOCIALGRAPH_WEB_CLIENT_ROOT", "").strip()
+    if web_root_raw:
+        try:
+            web_root = Path(web_root_raw).expanduser().resolve(strict=True)
+        except OSError as error:
+            raise RuntimeError("SOCIALGRAPH_WEB_CLIENT_ROOT does not exist") from error
+        index_file = web_root / "index.html"
+        if not web_root.is_dir() or not index_file.is_file() or index_file.is_symlink():
+            raise RuntimeError(
+                "SOCIALGRAPH_WEB_CLIENT_ROOT must contain a regular index.html"
+            )
+
+        @app.get("/", include_in_schema=False)
+        async def web_index() -> FileResponse:
+            return FileResponse(index_file)
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def web_asset_or_spa(full_path: str) -> FileResponse:
+            if full_path == "api" or full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail={"code": "API_ROUTE_NOT_FOUND"})
+            try:
+                candidate = (web_root / full_path).resolve(strict=True)
+                candidate.relative_to(web_root)
+            except (OSError, ValueError):
+                return FileResponse(index_file)
+            if candidate.is_file() and not candidate.is_symlink():
+                return FileResponse(candidate)
+            return FileResponse(index_file)
     return app
 
 

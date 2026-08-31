@@ -1,9 +1,9 @@
-from collections import namedtuple
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from collections import namedtuple
+from pathlib import Path
 
 import pytest
 
@@ -15,13 +15,12 @@ from socialgraph_gfm.runtime import (
     InsufficientDiskSpace,
     RuntimeLayout,
     artifact_root,
+    core_runtime_root,
     gfm_optional_runtime_report,
     prepare_runtime_layout,
     require_storage_reserve,
-    core_runtime_root,
     storage_report,
 )
-
 
 DiskUsage = namedtuple("DiskUsage", "total used free")
 
@@ -144,11 +143,11 @@ def test_gfm_runtime_launcher_delegates_to_audited_process_scoped_launcher():
     assert "enter-baselineruntime.ps1" in lowered
     assert "$env:socialgraph_fm_home" in lowered
     assert "$env:socialgraph_gfm_python" in lowered
-    assert 'validateset("base", "text")' in lowered
-    assert '"windows-cu130-gfm"' in lowered
-    assert "flagembedding" in lowered and '"1.4.0"' in lowered
-    assert "transformers" in lowered and '"5.14.1"' in lowered
-    assert "--require-hashes --no-build" in lowered
+    assert "dependencyprofile" not in lowered
+    assert "cu130" not in lowered
+    assert "flagembedding" not in lowered
+    assert "transformers" not in lowered
+    assert 'notepropertyvalue "cpu"' in lowered
     assert "setx" not in lowered
     assert "remove-item" not in lowered
 
@@ -269,7 +268,6 @@ def test_gfm_runtime_wikimedia_only_prompt_restores_salt_and_does_not_touch_open
           -RuntimeRoot {ps_quote(tmp_path / "runtime")} `
           -GfmPython {ps_quote(sys.executable)} `
           -Operation run `
-          -DependencyProfile base `
           -PromptForWikimediaSalt `
           -SecretAction {{
             param($Runtime)
@@ -334,7 +332,6 @@ def test_gfm_runtime_existing_both_secret_prompt_restores_both(tmp_path):
           -RuntimeRoot {ps_quote(tmp_path / "runtime")} `
           -GfmPython {ps_quote(sys.executable)} `
           -Operation run `
-          -DependencyProfile base `
           -PromptForSecrets `
           -SecretAction {{
             param($Runtime)

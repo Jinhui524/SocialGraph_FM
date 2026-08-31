@@ -1,9 +1,10 @@
 {
-  "schemaVersion": "gfm.runtime-lock-manifest/1.0",
+  "schemaVersion": "gfm.runtime-lock-manifest/2.0",
   "policy": {
     "sourceBuildsAllowed": false,
     "requireArtifactHashesForRelease": true,
-    "note": "uv-generated, no-build platform requirement locks contain SHA-256 hashes for every resolved distribution and are verified together with their source constraints."
+    "supportedDevices": ["cpu"],
+    "note": "Development and CI locks are separate from the smaller public single-runtime locks."
   },
   "profiles": {
     "windows-cpu": {
@@ -19,49 +20,6 @@
       ],
       "artifactHashesResolved": true,
       "optionalExtensionsUnavailable": ["torch-scatter", "torch-sparse"]
-    },
-    "windows-cu130": {
-      "python": "3.12.*",
-      "constraints": "constraints/windows-cu130.txt",
-      "constraintsSha256": "9ca7d216e38d7b99d6b6636251a4e482fca8d5bc79c829329527ead0ce4b1cc6",
-      "requirementsLock": "locks/windows-cu130.requirements.txt",
-      "requirementsLockSha256": "f143c06b3d410edb3bbd1f46b4d3cfc1a9f31bc2bd19cff2d3706217fcf36677",
-      "indexes": [
-        "https://pypi.org/simple",
-        "https://download.pytorch.org/whl/cu130",
-        "https://data.pyg.org/whl/torch-2.12.0+cu130.html"
-      ],
-      "artifactHashesResolved": true,
-      "optionalExtensionsUnavailable": ["torch-scatter", "torch-sparse"]
-    },
-    "windows-cu130-gfm": {
-      "python": "3.12.*",
-      "constraints": "constraints/windows-cu130-gfm.txt",
-      "constraintsSha256": "f208af7981eff95eeb7506cb38d51d2c062c9d2f8317cfb2c8433f8540e12d4b",
-      "requirementsLock": "locks/windows-cu130-gfm.requirements.txt",
-      "requirementsLockSha256": "983ae4347b8bf50dd206d6efef939709481ed14f558c98c004bd63a588b75077",
-      "indexes": [
-        "https://pypi.org/simple",
-        "https://download.pytorch.org/whl/cu130",
-        "https://data.pyg.org/whl/torch-2.12.0+cu130.html"
-      ],
-      "artifactHashesResolved": true,
-      "optionalExtensionsUnavailable": ["torch-scatter", "torch-sparse"],
-      "purpose": "SocialGraph-FM Core frozen BGE-M3 embedding"
-    },
-    "linux-cu130": {
-      "python": "3.12.*",
-      "constraints": "constraints/linux-cu130.txt",
-      "constraintsSha256": "9d6e1c561d2026af217744ee397d76de5fd81cfd4cc438fde14b1b4b89d67971",
-      "requirementsLock": "locks/linux-cu130.requirements.txt",
-      "requirementsLockSha256": "fa3ebfe32b86c1d8f420fa5c72ad5fafbd75e100eaddd21e1de067a092ada422",
-      "indexes": [
-        "https://pypi.org/simple",
-        "https://download.pytorch.org/whl/cu130",
-        "https://data.pyg.org/whl/torch-2.12.0+cu130.html"
-      ],
-      "artifactHashesResolved": true,
-      "optionalExtensionsUnavailable": []
     },
     "cpu-ci": {
       "python": "3.12.*",

@@ -11,7 +11,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 QUICKSTART_COMMANDS = [
     "python scripts/socialgraph.py onboard",
-    "python scripts/socialgraph.py start --llm-mode required",
+    "python scripts/socialgraph.py start",
     "python scripts/socialgraph.py stop",
 ]
 
@@ -64,7 +64,7 @@ def _section(content: str, heading: str) -> str:
 
 def _quickstart_commands(content: str, heading: str) -> list[str]:
     return re.findall(
-        r"^python scripts/socialgraph\.py (?:onboard|start --llm-mode required|stop)$",
+        r"^python scripts/socialgraph\.py (?:onboard|start|stop)$",
         _section(content, heading),
         flags=re.MULTILINE,
     )
@@ -107,42 +107,34 @@ def test_secret_scan_rejects_token_and_tracked_dotenv(tmp_path: Path, env_name: 
     assert env_name in env_result.stdout + env_result.stderr
 
 
-def test_public_readmes_are_bilingual_linked_and_share_the_quickstart() -> None:
-    english = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    chinese = (PROJECT_ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+def test_public_readme_is_chinese_and_keeps_the_three_command_quickstart() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     reference = (PROJECT_ROOT / "docs" / "REFERENCE.md").read_text(encoding="utf-8")
 
-    assert "[简体中文](README.zh-CN.md)" in english
-    assert "[English](README.md)" in chinese
-    assert re.search(r"[\u4e00-\u9fff]", chinese)
+    assert re.search(r"[\u4e00-\u9fff]", readme)
+    assert "README.zh-CN.md" not in readme
 
-    assert _quickstart_commands(english, "Quick start") == QUICKSTART_COMMANDS
-    assert _quickstart_commands(chinese, "三步启动") == QUICKSTART_COMMANDS
-    assert _quickstart_commands(reference, "Onboarding and lifecycle") == QUICKSTART_COMMANDS
+    assert _quickstart_commands(readme, "三步启动") == QUICKSTART_COMMANDS
+    assert _quickstart_commands(reference, "Onboarding 与生命周期") == QUICKSTART_COMMANDS
 
     for heading in (
-        "Architecture",
-        "Requirements and support",
-        "Model API configuration",
-        "Complete user workflows",
-        "Skills",
-        "Repository layout",
-        "Governance and responsibility boundary",
+        "主要能力",
+        "环境要求",
+        "配置大模型",
+        "研判 Assistant Skills",
+        "Governance Skills",
+        "项目结构",
+        "使用边界",
     ):
-        _section(english, heading)
-    for heading in (
-        "系统架构",
-        "环境要求与支持矩阵",
-        "模型 API 配置",
-        "完整用户功能",
-        "Skills",
-        "仓库目录",
-        "治理与责任边界",
-    ):
-        _section(chinese, heading)
+        _section(readme, heading)
 
 
 def test_skill_tables_follow_each_canonical_catalog_order() -> None:
+    assistant = json.loads(
+        (PROJECT_ROOT / "skills" / "assistant" / "catalog.json").read_text(
+            encoding="utf-8"
+        )
+    )
     governance = json.loads(
         (PROJECT_ROOT / "skills" / "governance" / "catalog.json").read_text(
             encoding="utf-8"
@@ -151,26 +143,27 @@ def test_skill_tables_follow_each_canonical_catalog_order() -> None:
     core = json.loads(
         (PROJECT_ROOT / "skills" / "core" / "catalog.json").read_text(encoding="utf-8")
     )
+    assistant_names = [skill["name"] for skill in assistant["items"]]
     governance_names = [skill["name"] for skill in governance["items"]]
     core_names = [skill["name"] for skill in core["items"]]
 
-    english_root = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    chinese_root = (PROJECT_ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
-    english_skills = (PROJECT_ROOT / "skills" / "README.md").read_text(encoding="utf-8")
-    chinese_skills = (PROJECT_ROOT / "skills" / "README.zh-CN.md").read_text(
-        encoding="utf-8"
-    )
+    root = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    skills = (PROJECT_ROOT / "skills" / "README.md").read_text(encoding="utf-8")
 
-    assert _skill_rows(english_root, "Skills") == governance_names
-    assert _skill_rows(chinese_root, "Skills") == governance_names
-    assert _skill_rows(english_skills, "Governance catalog") == governance_names
-    assert _skill_rows(chinese_skills, "Governance 正式目录") == governance_names
-    assert _skill_rows(english_skills, "Experimental Core catalog") == core_names
-    assert _skill_rows(chinese_skills, "实验 Core 目录") == core_names
+    assert _skill_rows(root, "研判 Assistant Skills") == assistant_names
+    assert _skill_rows(root, "Governance Skills") == governance_names
+    assert _skill_rows(skills, "Assistant Skills 与界面对应") == assistant_names
+    assert _skill_rows(skills, "Governance Skills") == governance_names
+    assert _skill_rows(skills, "实验 Core Skills") == core_names
+
+    for name in assistant_names:
+        assert (PROJECT_ROOT / "skills" / "assistant" / name / "SKILL.md").is_file()
+    for name in governance_names:
+        assert (PROJECT_ROOT / "skills" / "governance" / name / "SKILL.md").is_file()
 
     predecessor_name = "run_" + "io" + "hunter"
-    assert sum(document.count(predecessor_name) for document in (english_skills, chinese_skills)) == 1
-    assert "no compatibility alias is exposed" in english_skills
+    assert skills.count(predecessor_name) == 1
+    assert "no compatibility alias is exposed" in skills
 
 
 def test_public_docs_skills_and_license_inventory_is_minimal_and_complete() -> None:
@@ -185,11 +178,8 @@ def test_public_docs_skills_and_license_inventory_is_minimal_and_complete() -> N
         path.relative_to(PROJECT_ROOT).as_posix()
         for path in (PROJECT_ROOT / "skills").glob("README*.md")
     )
-    assert skill_readmes == ["skills/README.md", "skills/README.zh-CN.md"]
-    assert sorted(path.name for path in PROJECT_ROOT.glob("README*.md")) == [
-        "README.md",
-        "README.zh-CN.md",
-    ]
+    assert skill_readmes == ["skills/README.md"]
+    assert sorted(path.name for path in PROJECT_ROOT.glob("README*.md")) == ["README.md"]
 
     component_readmes = (
         PROJECT_ROOT / "apps" / "web" / "README.md",
@@ -214,15 +204,13 @@ def test_public_docs_skills_and_license_inventory_is_minimal_and_complete() -> N
 def test_public_docs_explain_core_readiness_and_do_not_link_removed_policies() -> None:
     paths = (
         PROJECT_ROOT / "README.md",
-        PROJECT_ROOT / "README.zh-CN.md",
         PROJECT_ROOT / "docs" / "REFERENCE.md",
         PROJECT_ROOT / "skills" / "README.md",
-        PROJECT_ROOT / "skills" / "README.zh-CN.md",
     )
     contents = [path.read_text(encoding="utf-8") for path in paths]
-    assert all("docs/status/readiness.json" in content for content in contents[:2])
-    assert "experimental Core" in contents[0]
-    assert "does not mean" in contents[2]
+    assert "docs/status/readiness.json" in contents[0]
+    assert "实验 Core" in contents[0]
+    assert "不影响" in contents[1]
 
     removed_names = ("CONTRIBUTING" + ".md", "SECURITY" + ".md")
     assert all(name not in content for name in removed_names for content in contents)

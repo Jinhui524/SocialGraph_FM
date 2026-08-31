@@ -1,508 +1,236 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-import socialgraph_fm_runtime.operations as operations
+from socialgraph_fm_runtime import operations
 from socialgraph_fm_runtime.environment import CompatibilityResult
 from socialgraph_fm_runtime.layout import RuntimeLayout, environment_python
-from socialgraph_fm_runtime.profile import RuntimeProfile
 
 
-def test_provider_check_injects_key_only_into_the_api_child(
-    monkeypatch, tmp_path: Path
-) -> None:
-    layout = RuntimeLayout(tmp_path)
-    layout.api_root.mkdir(parents=True)
-    runtime = SimpleNamespace(
-        interpreters={"api": {"path": sys.executable}, "gfm": None}
+def _result(python: Path) -> CompatibilityResult:
+    fingerprint = {
+        "fingerprintSha256": f"hash:{python}",
+        "pythonVersion": "3.12.4",
+        "versions": {"torch": "2.8.0+cpu"},
+        "torch": {"cpuBuild": True},
+        "neighborLoader": True,
+    }
+    return CompatibilityResult(True, (), fingerprint)
+
+
+def _profile(system: str = "Windows") -> dict[str, object]:
+    identifier = (
+        "windows-x86_64-cpu-pt28"
+        if system == "Windows"
+        else "linux-x86_64-cpu-pt28"
     )
-    monkeypatch.setattr(operations.RuntimeProfile, "load", lambda _path: runtime)
-    captured: dict[str, object] = {}
+    return {
+        "id": identifier,
+        "system": system,
+        "machine": "x86_64",
+        "requirementsLockSha256": "a" * 64,
+    }
 
-    def fake_run(command, **kwargs):
-        captured["command"] = command
-        captured["environment"] = kwargs["environment"]
+
+def test_provider_check_injects_key_only_into_api_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_run(_command, *, environment, **_kwargs):
+        captured.update(environment)
         return SimpleNamespace(
             returncode=0,
-            stdout=(
-                '{"schemaVersion":"socialgraph-fm.llm-provider-check/1.0",'
-                '"ok":true,"code":"OK"}\n'
+            stdout=json.dumps(
+                {
+                    "schemaVersion": "socialgraph-fm.llm-provider-check/1.0",
+                    "ok": True,
+                    "code": "OK",
+                }
             ),
             stderr="",
         )
 
     monkeypatch.setattr(operations, "run_captured_process", fake_run)
-    monkeypatch.setenv("OPENAI_API_KEY", "parent-sentinel")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "parent-anthropic-sentinel")
-    environment = {
-        "LLM_API_BASE": "https://provider.example/v1",
-        "LLM_API_KEY": "configured-key",
-        "LLM_MODEL": "configured-model",
-        "LLM_API_MODE": "chat_completions",
-        "LLM_TIMEOUT_SECONDS": "15",
-        "LLM_ALLOW_INSECURE_LOOPBACK": "false",
-        "LLM_VERIFICATION_STATUS": "configured_unverified",
+    monkeypatch.setattr(operations, "resolve_python", lambda value: Path(value))
+    operations.test_llm_configuration(
+        RuntimeLayout(tmp_path),
+        {
+            "LLM_API_BASE": "https://provider.example/v1",
+            "LLM_MODEL": "model-id",
+            "LLM_API_KEY": "test-secret",
+        },
+        runtime_python=Path(sys.executable),
+    )
+    assert captured["LLM_API_KEY"] == "test-secret"
+    assert {name for name in captured if name.startswith("LLM_")} == {
+        "LLM_API_BASE",
+        "LLM_API_KEY",
+        "LLM_MODEL",
     }
 
-    operations.test_llm_configuration(layout, environment)
 
-    child = captured["environment"]
-    assert isinstance(child, dict)
-    assert child["LLM_API_KEY"] == "configured-key"
-    assert "OPENAI_API_KEY" not in child
-    assert "ANTHROPIC_API_KEY" not in child
-    assert captured["command"][-2:] == ["-m", "app.provider_check"]
+def test_provider_check_surfaces_only_safe_failure_category(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(operations, "resolve_python", lambda value: Path(value))
+    monkeypatch.setattr(
+        operations,
+        "run_captured_process",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout='{"code":"LLM_AUTH_ERROR"}',
+            stderr="upstream leaked test-secret",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="AUTH") as captured:
+        operations.test_llm_configuration(
+            RuntimeLayout(tmp_path),
+            {
+                "LLM_API_BASE": "https://provider.example/v1",
+                "LLM_MODEL": "model-id",
+                "LLM_API_KEY": "test-secret",
+            },
+            runtime_python=Path(sys.executable),
+        )
+    assert "test-secret" not in str(captured.value)
 
 
-def test_provider_check_surfaces_only_the_safe_failure_category(
+def test_two_services_share_one_python_but_only_api_receives_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     layout = RuntimeLayout(tmp_path)
-    layout.api_root.mkdir(parents=True)
-    secret = "provider-response-" + "sentinel"
-
-    def fake_run(_command, **_kwargs):
-        return SimpleNamespace(
-            returncode=1,
-            stdout="",
-            stderr=(
-                '{"schemaVersion":"socialgraph-fm.llm-provider-check/1.0",'
-                '"ok":false,"code":"LLM_AUTH_ERROR"}\n'
-                + secret
-            ),
-        )
-
-    monkeypatch.setattr(operations, "run_captured_process", fake_run)
-    environment = {
-        "LLM_API_BASE": "https://provider.example/v1",
-        "LLM_API_KEY": "test-key",
-        "LLM_MODEL": "test-model",
-        "LLM_API_MODE": "chat_completions",
-        "LLM_AUTH_SCHEME": "bearer",
-        "LLM_ANTHROPIC_VERSION": "",
-        "LLM_TIMEOUT_SECONDS": "15",
-        "LLM_ALLOW_INSECURE_LOOPBACK": "false",
-        "LLM_VERIFICATION_STATUS": "configured_unverified",
-    }
-
-    with pytest.raises(RuntimeError, match="AUTH") as captured:
-        operations.test_llm_configuration(
-            layout, environment, api_python=Path(sys.executable)
-        )
-    assert secret not in str(captured.value)
-
-
-def test_web_and_gfm_service_environments_never_receive_llm_keys(
-    monkeypatch, tmp_path: Path
-) -> None:
-    layout = RuntimeLayout(tmp_path)
-    for path in (layout.web_root, layout.api_root, layout.gfm_package):
-        path.mkdir(parents=True)
-    vite = layout.web_root / "node_modules" / "vite" / "bin" / "vite.js"
-    vite.parent.mkdir(parents=True)
-    vite.write_text("fixture", encoding="utf-8")
-    monkeypatch.setattr(operations.shutil, "which", lambda _name: sys.executable)
-    monkeypatch.setenv("LLM_API_KEY", "parent-sentinel")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "parent-anthropic-sentinel")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "parent-deepseek-sentinel")
-    monkeypatch.setenv("ZHIPUAI_API_KEY", "parent-glm-sentinel")
-    runtime = SimpleNamespace(
-        profile="cuda", interpreters={}, install_profile_id="fixture-profile"
-    )
-    services = operations.build_services(
-        layout,
-        runtime,
-        {"api": Path(sys.executable), "gfm": Path(sys.executable)},
-        mode="development",
-        enable_llm=False,
-        ports=operations.Ports(web=15173, api=18000, gfm=18766),
-    )
-
-    for service in services:
-        assert "LLM_API_KEY" not in service.environment
-        assert "OPENAI_API_KEY" not in service.environment
-        assert "ANTHROPIC_API_KEY" not in service.environment
-        assert "DEEPSEEK_API_KEY" not in service.environment
-        assert "ZHIPUAI_API_KEY" not in service.environment
-
-    gfm = next(service for service in services if service.name == "gfm")
-    assert gfm.health_json == {
-        "schemaVersion": "socialgraph-fm.core-internal-health/2.0",
-        "ok": True,
-    }
-
-
-@pytest.mark.parametrize(
-    ("wheel_family", "device_policy", "expected"),
-    [
-        ("cpu", "auto", "cpu"),
-        ("cuda", "auto", "auto"),
-        ("cuda", "cpu", "cpu"),
-        ("cuda", "cuda-required", "cuda"),
-    ],
-)
-def test_service_device_argument_separates_wheels_from_policy(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    wheel_family: str,
-    device_policy: str,
-    expected: str,
-) -> None:
-    layout = RuntimeLayout(tmp_path)
-    for path in (layout.web_root, layout.api_root, layout.gfm_package):
-        path.mkdir(parents=True)
-    vite = layout.web_root / "node_modules" / "vite" / "bin" / "vite.js"
-    vite.parent.mkdir(parents=True)
-    vite.write_text("fixture", encoding="utf-8")
-    monkeypatch.setattr(operations.shutil, "which", lambda _name: sys.executable)
-    runtime = SimpleNamespace(
-        profile=wheel_family,
-        device_policy=device_policy,
-        interpreters={},
-        install_profile_id="fixture-profile",
-    )
-    services = operations.build_services(
-        layout,
-        runtime,
-        {"api": Path(sys.executable), "gfm": Path(sys.executable)},
-        mode="development",
-        enable_llm=False,
-        ports=operations.Ports(web=15173, api=18000, gfm=18766),
-    )
-    gfm = next(service for service in services if service.name == "gfm")
-    index = gfm.arguments.index("--global-model-device")
-    assert gfm.arguments[index + 1] == expected
-
-
-def test_full_doctor_never_executes_unverified_model_assets(
-    monkeypatch, tmp_path: Path
-) -> None:
-    layout = RuntimeLayout(tmp_path)
-    for path in (layout.web_root, layout.api_root, layout.gfm_package):
-        path.mkdir(parents=True)
-    vite = layout.web_root / "node_modules" / "vite" / "bin" / "vite.js"
-    vite.parent.mkdir(parents=True)
-    vite.write_text("fixture", encoding="utf-8")
-    runtime = SimpleNamespace(
-        profile="cuda", interpreters={}, install_profile_id="fixture-profile"
-    )
-    monkeypatch.setattr(operations.RuntimeProfile, "load", lambda _path: runtime)
+    python = Path(sys.executable)
     monkeypatch.setattr(
         operations,
-        "validate_profile",
-        lambda *_args: {"api": Path(sys.executable), "gfm": Path(sys.executable)},
-    )
-    monkeypatch.setattr(
-        operations,
-        "load_and_verify_bundle",
-        lambda _layout: (_ for _ in ()).throw(RuntimeError("tampered bundle")),
-    )
-    executed = False
-    checkpoint_executed = False
-
-    def forbidden_forward(*_args, **_kwargs):
-        nonlocal executed
-        executed = True
-        raise AssertionError("unverified model was executed")
-
-    def forbidden_checkpoint_forward(*_args, **_kwargs):
-        nonlocal checkpoint_executed
-        checkpoint_executed = True
-        raise AssertionError("unverified checkpoint was executed")
-
-    monkeypatch.setattr(operations, "run_full_gfm_probe", forbidden_forward)
-    monkeypatch.setattr(
-        operations, "run_checkpoint_forward_probe", forbidden_checkpoint_forward
-    )
-    monkeypatch.setattr(operations, "parse_private_environment", lambda _path: {})
-
-    report = operations.doctor(layout, full=True)
-
-    assert report["passed"] is False
-    assert executed is False
-    assert checkpoint_executed is False
-    forward = next(check for check in report["checks"] if check["name"] == "global-forward")
-    assert forward["passed"] is False
-    assert "not verified" in forward["detail"]
-
-
-def test_noninteractive_llm_modes_never_wait_for_input(
-    monkeypatch, tmp_path: Path
-) -> None:
-    layout = RuntimeLayout(tmp_path)
-    monkeypatch.setattr(operations.os, "isatty", lambda _fd: False)
-
-    assert operations.resolve_llm(layout, "disabled", no_prompt=False) is False
-    assert operations.resolve_llm(layout, "optional", no_prompt=False) is False
-    with pytest.raises(RuntimeError, match="required but missing"):
-        operations.resolve_llm(layout, "required", no_prompt=False)
-
-
-def _compatible(capability: str) -> CompatibilityResult:
-    fingerprint = {
-        "fingerprintSha256": capability * 64,
-        "pythonVersion": "3.12.4",
-        "system": "Windows",
-        "machine": "AMD64",
-        "libc": None,
-        "libcVersion": None,
-        "versions": {},
-        "imports": {},
-        "torch": {},
-        "neighborLoader": None,
-    }
-    return CompatibilityResult(True, (), fingerprint)
-
-
-def _patch_minimal_offline_setup(
-    monkeypatch: pytest.MonkeyPatch, layout: RuntimeLayout
-) -> None:
-    layout.api_root.mkdir(parents=True)
-    (layout.api_root / "requirements.lock").write_text("fixture", encoding="utf-8")
-    monkeypatch.setattr(RuntimeLayout, "initialize_serving_contracts", lambda _self: None)
-    monkeypatch.setattr(operations, "migrate_private_environment_permissions", lambda _path: None)
-    monkeypatch.setattr(operations, "ensure_bootstrap_python", lambda _value: Path(sys.executable))
-    monkeypatch.setattr(
-        operations, "probe_bootstrap_environment", lambda _python: _compatible("b")
-    )
-    monkeypatch.setattr(
-        operations,
-        "_host_diagnostics",
-        lambda: {
-            "system": "windows",
-            "machine": "x86_64",
-            "libc": None,
-            "libcVersion": None,
-            "node": {"available": False, "version": None},
-            "npm": {"available": False, "version": None},
-            "gpuDriver": {"available": False, "driverVersion": None},
+        "resolve_llm",
+        lambda _layout: {
+            "LLM_API_BASE": "https://provider.example/v1",
+            "LLM_MODEL": "model-id",
+            "LLM_API_KEY": "test-secret",
         },
     )
-    monkeypatch.setattr(operations, "load_and_verify_bundle", lambda _layout: object())
+    monkeypatch.setattr(
+        Path,
+        "stat",
+        lambda self: SimpleNamespace(st_mtime_ns=1, st_size=2),
+    )
+    services = operations.build_services(
+        layout,
+        {"api": python, "gfm": python},
+        ports=operations.Ports(5173, 5173, 8766),
+    )
+
+    assert [service.name for service in services] == ["gfm", "socialgraph-api"]
+    assert all(service.executable == python for service in services)
+    assert "LLM_API_KEY" not in services[0].environment
+    assert services[1].environment["LLM_API_KEY"] == "test-secret"
+    assert services[1].environment["SOCIALGRAPH_WEB_CLIENT_ROOT"] == str(
+        layout.web_client_root
+    )
+    assert services[0].arguments[services[0].arguments.index("--global-model-device") + 1] == "cpu"
+
+
+def _patch_setup(
+    monkeypatch: pytest.MonkeyPatch,
+    layout: RuntimeLayout,
+    *,
+    existing: bool = False,
+) -> None:
+    monkeypatch.setattr(RuntimeLayout, "initialize_serving_contracts", lambda _self: None)
+    monkeypatch.setattr(operations, "_managed_services_stopped", lambda _layout: True)
+    monkeypatch.setattr(
+        operations,
+        "migrate_private_environment_permissions",
+        lambda _path, **_kwargs: None,
+    )
+    monkeypatch.setattr(operations, "_profile_for_host", lambda _layout: _profile())
+    monkeypatch.setattr(operations, "ensure_bootstrap_python", lambda: Path(sys.executable))
+    monkeypatch.setattr(
+        operations,
+        "probe_bootstrap_environment",
+        lambda _python: _result(Path(sys.executable)),
+    )
+    monkeypatch.setattr(operations, "normalized_platform", lambda: ("windows", "x86_64"))
+    monkeypatch.setattr(
+        operations,
+        "probe_runtime_environment",
+        lambda python, _profile: _result(Path(python)),
+    )
+
+    def fake_install(_layout, _bootstrap, _profile, *, destination, **_kwargs):
+        python = environment_python(destination)
+        python.parent.mkdir(parents=True)
+        python.write_text("python", encoding="utf-8")
+        return python
+
+    monkeypatch.setattr(operations, "install_runtime_environment", fake_install)
+    monkeypatch.setattr(
+        operations,
+        "install_web_bundle",
+        lambda _layout: {"fileCount": 1, "totalBytes": 1},
+    )
+    bundle = object()
+    monkeypatch.setattr(operations, "install_public_runtime_bundle", lambda *_args: bundle)
     monkeypatch.setattr(
         operations,
         "materialize_target_examples",
-        lambda _layout, _bundle: {"zeroShot": {}, "fewShot": {}},
+        lambda *_args: {"zeroShot": {}, "fewShot": {}},
     )
-    monkeypatch.setattr(operations, "_managed_services_stopped", lambda _layout: True)
+    monkeypatch.setattr(operations, "_cleanup_legacy_installations", lambda *_args: None)
+    if existing:
+        layout.runtime_environment.mkdir(parents=True)
+        (layout.runtime_environment / "marker").write_text("old", encoding="utf-8")
 
 
-def test_broken_managed_environment_builds_a_new_generation_then_switches(
+def test_setup_builds_temp_then_switches_one_runtime_and_runs_callback(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     layout = RuntimeLayout(tmp_path)
-    _patch_minimal_offline_setup(monkeypatch, layout)
-    old_root = layout.managed_environment("api", "old")
-    old_python = environment_python(old_root)
-    old_python.parent.mkdir(parents=True)
-    old_python.write_bytes(b"broken")
-    old = RuntimeProfile.create(
-        profile="offline",
-        env_mode="managed",
-        install_profile_id=None,
-        platform={"system": "windows", "machine": "x86_64"},
-        interpreters={
-            "bootstrap": None,
-            "api": {
-                "path": str(old_python),
-                "source": "managed",
-                "fingerprint": _compatible("o").fingerprint,
-            },
-            "gfm": None,
-        },
-    )
-    old.write(layout.profile_file)
-
-    def probe(path: Path, _root: Path) -> CompatibilityResult:
-        return CompatibilityResult(False, ("broken",), _compatible("x").fingerprint) if path == old_python else _compatible("a")
-
-    installed: list[Path] = []
-
-    def install(_layout, _bootstrap, *, destination, logger):
-        installed.append(destination)
-        selected = environment_python(destination)
-        selected.parent.mkdir(parents=True)
-        selected.write_bytes(b"new")
-        logger("installed fixture")
-        return selected
-
-    monkeypatch.setattr(operations, "probe_api_environment", probe)
-    monkeypatch.setattr(operations, "install_api_environment", install)
+    _patch_setup(monkeypatch, layout)
+    callback: list[Path] = []
 
     runtime = operations.setup(
         layout,
         operations.SetupOptions(
-            profile="offline", env_mode="managed", skip_web=True, full_probe=False
-        ),
-    )
-
-    assert len(installed) == 1
-    assert installed[0] != old_root
-    assert runtime.interpreters["api"]["path"] == str(environment_python(installed[0]))
-    assert not old_root.exists()
-    assert installed[0].is_dir()
-
-
-def test_reuse_mode_never_installs_into_an_external_python(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    layout = RuntimeLayout(tmp_path)
-    _patch_minimal_offline_setup(monkeypatch, layout)
-    monkeypatch.setattr(
-        operations, "probe_api_environment", lambda _python, _root: _compatible("a")
-    )
-    monkeypatch.setattr(
-        operations,
-        "install_api_environment",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("reuse must not install")
-        ),
-    )
-
-    runtime = operations.setup(
-        layout,
-        operations.SetupOptions(
-            profile="offline",
-            env_mode="reuse",
-            api_python=sys.executable,
-            skip_web=True,
             full_probe=False,
+            after_runtime=lambda python: callback.append(python),
         ),
     )
 
-    assert runtime.interpreters["api"]["source"] == "explicit"
-    assert runtime.interpreters["api"]["path"] == str(Path(sys.executable))
+    assert callback == [environment_python(layout.runtime_environment)]
+    assert Path(runtime.interpreter["path"]) == environment_python(layout.runtime_environment)
+    assert runtime.install_profile_id == "windows-x86_64-cpu-pt28"
+    assert layout.profile_file.is_file()
 
 
-def test_onboarding_callback_runs_after_api_and_selects_offline(
+def test_failed_required_llm_callback_rolls_back_previous_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     layout = RuntimeLayout(tmp_path)
-    _patch_minimal_offline_setup(monkeypatch, layout)
-    monkeypatch.setattr(
-        operations, "probe_api_environment", lambda _python, _root: _compatible("a")
-    )
-    observed: list[Path] = []
+    _patch_setup(monkeypatch, layout, existing=True)
 
-    def after_api(api_python: Path) -> str:
-        observed.append(api_python)
-        assert api_python == Path(sys.executable)
-        return "offline"
+    def fail(_python: Path) -> None:
+        raise RuntimeError("LLM connection check failed: AUTH")
 
-    runtime = operations.setup(
-        layout,
-        operations.SetupOptions(
-            profile="auto",
-            env_mode="reuse",
-            api_python=sys.executable,
-            skip_web=True,
-            full_probe=False,
-            after_api=after_api,
-        ),
-    )
-
-    assert observed == [Path(sys.executable)]
-    assert runtime.profile == "offline"
-    assert runtime.device_policy == "auto"
-
-
-def test_onboarding_auto_requires_an_explicit_wheel_result(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    layout = RuntimeLayout(tmp_path)
-    _patch_minimal_offline_setup(monkeypatch, layout)
-    monkeypatch.setattr(
-        operations, "probe_api_environment", lambda _python, _root: _compatible("a")
-    )
-    with pytest.raises(RuntimeError, match="must select"):
+    with pytest.raises(RuntimeError, match="AUTH"):
         operations.setup(
             layout,
-            operations.SetupOptions(
-                profile="auto",
-                env_mode="reuse",
-                api_python=sys.executable,
-                skip_web=True,
-                full_probe=False,
-                after_api=lambda _python: None,
-            ),
+            operations.SetupOptions(full_probe=False, after_runtime=fail),
         )
 
+    assert (layout.runtime_environment / "marker").read_text(encoding="utf-8") == "old"
+    assert not layout.profile_file.exists()
 
-def test_cleanup_never_removes_a_generation_still_referenced_explicitly(
+
+def test_resolve_llm_never_offers_offline_mode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    layout = RuntimeLayout(tmp_path)
-    root = layout.managed_environment("api", "same")
-    python = environment_python(root)
-    python.parent.mkdir(parents=True)
-    python.write_bytes(b"fixture")
-    old = RuntimeProfile.create(
-        profile="offline",
-        env_mode="managed",
-        install_profile_id=None,
-        platform={"system": "windows", "machine": "x86_64"},
-        interpreters={
-            "bootstrap": None,
-            "api": {"path": str(python), "source": "managed"},
-            "gfm": None,
-        },
-    )
-    current = RuntimeProfile.create(
-        profile="offline",
-        env_mode="auto",
-        install_profile_id=None,
-        platform={"system": "windows", "machine": "x86_64"},
-        interpreters={
-            "bootstrap": None,
-            "api": {"path": str(python), "source": "explicit"},
-            "gfm": None,
-        },
-    )
-    monkeypatch.setattr(operations, "_managed_services_stopped", lambda _layout: True)
-
-    operations._cleanup_replaced_generations(
-        layout, old, current, operations._SetupReporter(layout)
-    )
-
-    assert root.is_dir()
-
-
-def test_managed_generation_paths_are_short_and_legacy_paths_remain_recognized(
-    tmp_path: Path,
-) -> None:
-    layout = RuntimeLayout(tmp_path)
-    current = layout.managed_environment("gfm", "a" * 12)
-    legacy = layout.legacy_managed_environment_root / "gfm" / ("b" * 20)
-
-    assert current == tmp_path / "var" / "e" / "g" / ("a" * 12)
-    assert operations._is_repo_managed_python(layout, environment_python(current))
-    assert operations._is_repo_managed_python(layout, environment_python(legacy))
-
-
-def test_host_compatibility_rejects_node_or_npm_drift() -> None:
-    host = {
-        "node": {"available": True, "version": "v23.9.0"},
-        "npm": {"available": True, "version": "11.6.2"},
-        "gpuDriver": {"available": True},
-    }
-    with pytest.raises(RuntimeError, match="Node.js 24.x"):
-        operations._require_host_compatibility(host, web=True, cuda=False)
-
-    host["node"] = {"available": True, "version": "v24.13.0"}
-    host["npm"] = {"available": True, "version": "10.9.0"}
-    with pytest.raises(RuntimeError, match="npm 11.x"):
-        operations._require_host_compatibility(host, web=True, cuda=False)
-
-
-def test_host_compatibility_requires_a_cuda_driver_for_cuda_profile() -> None:
-    host = {
-        "node": {"available": True, "version": "v24.13.0"},
-        "npm": {"available": True, "version": "11.6.2"},
-        "gpuDriver": {"available": False},
-    }
-    with pytest.raises(RuntimeError, match="NVIDIA driver"):
-        operations._require_host_compatibility(host, web=True, cuda=True)
+    monkeypatch.setattr(operations, "parse_private_environment", lambda _path: {})
+    with pytest.raises(RuntimeError, match="configure-llm"):
+        operations.resolve_llm(RuntimeLayout(tmp_path))

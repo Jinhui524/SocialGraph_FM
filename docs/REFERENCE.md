@@ -1,294 +1,160 @@
-# SocialGraph-FM Reference
+# SocialGraph-FM 技术参考
 
-This document is the complete technical and operational reference for the public
-SocialGraph-FM runtime. Use the root [English README](../README.md) or
-[Chinese README](../README.zh-CN.md) as the quick-start entry point.
+[根 README](../README.md) 是普通用户入口；本文面向开发、排障和发布验证。
 
-## Runtime architecture
+## 运行架构
 
-SocialGraph-FM runs three isolated loopback processes:
+```text
+浏览器
+  └─ http://127.0.0.1:5173
+       API + 预构建 Web（不加载 Torch，唯一持有 LLM Key 的进程）
+         └─ 带会话令牌的内部回环 HTTP
+              GFM 127.0.0.1:8766（PyTorch/PyG 推理、适配和检索）
+```
 
-1. `apps/web` provides graph import, visualization, governance, adaptation, retrieval,
-   review, and reporting interfaces.
-2. `services/api` validates public requests, stores local workflow state, manages
-   confirmation tickets, and optionally calls the configured model API. It must not
-   import Torch.
-3. `packages/gfm` loads PyTorch/PyG, SocialGraph-FM Global, Governance, Core, and
-   Research modules. It communicates with the API through authenticated internal HTTP.
+公开运行版只有一个受管 Python 3.12 环境 `var/runtime`，但 API/Web 与 GFM 仍是两个隔离进程。API Key 仅加入 API 子进程环境；浏览器、GFM、命令输出和日志均不得获得密钥。
 
-The browser never receives provider credentials or direct GFM filesystem access. The
-API validates public contracts independently from the stricter internal GFM contracts.
-Model, graph, threshold, task, and execution-environment identities are recorded with
-each governed run.
+API 在所有 `/api/` 路由之后挂载预构建静态站点和 SPA fallback。普通用户不会启动 Vite，也不会创建 `node_modules`。
 
-## Supported platforms and wheels
+## 平台与依赖
 
-| Platform | Runtime profile | Release status |
+| 平台 | 执行设备 | 发布状态 |
 | --- | --- | --- |
-| Windows x86-64 | CPU, PyTorch 2.8 / PyG 2.8 | Required CI path |
-| Windows x86-64 with NVIDIA GPU | CUDA 13.0, PyTorch 2.12 / PyG 2.8 | Real release validation on a temporary self-hosted GPU runner |
-| Ubuntu glibc x86-64 | CPU, PyTorch 2.8 / PyG 2.8 | Required CI path |
-| macOS ARM64 | CPU, PyTorch 2.8 / PyG 2.8 | Best-effort, non-blocking diagnostics |
+| Windows x64 | CPU | 必测 |
+| Ubuntu glibc x64 | CPU | 必测 |
 
-The install catalog is `packages/gfm/install-profiles.json`. It fixes Python, platform,
-architecture, PyTorch, PyG, extension wheels, package indexes, and hash-locked
-requirements. Arbitrary wheel URLs and silent source builds are rejected. The default
-wheel profile is CPU; CUDA installation requires explicit `--wheel-profile cuda`.
-Wheel selection and execution device policy are independent. CUDA requires a matching
-wheel backend and driver; a local CUDA Toolkit or `nvcc` is not required.
+公开运行版不提供 CUDA、MPS、ROCm、macOS、musl 或其他架构 profile，也不做运行设备自动选择。
 
-Linux CUDA profile metadata is retained for reproducibility, but Linux CUDA is not a
-current release commitment. Intel macOS, MPS, ROCm, musl, ARM Linux/Windows, and other
-architectures are also outside the supported matrix.
+用户环境保留：
 
-### Environment selection
+- PyTorch 2.8 CPU、PyG 2.8、`pyg-lib` 0.6；
+- NumPy、Pydantic、NetworkX；
+- FastAPI、HTTPX、Pydantic Settings、python-multipart、基础 Uvicorn；
+- SocialGraph-FM API、GFM 与 runtime 包。
+
+PyG/`pyg-lib` 用于在线 Governance 的固定 fanout `NeighborLoader`，删除会改变真实 checkpoint 推理路径。Torch wheel 安装后只裁剪版本锁定 allowlist 中的编译头、CMake 元数据和链接库；每个平台都必须在裁剪后通过真实 checkpoint forward。
+
+OGB、Pandas、SciPy、scikit-learn、FlagEmbedding、Transformers、pytest、ruff、mypy 和构建工具不进入用户 runtime。研究人员可在独立开发环境安装：
 
 ```console
-python scripts/socialgraph.py setup \
-  --wheel-profile cpu|cuda|PROFILE_ID \
-  --device-policy auto|cpu|cuda-required \
-  --env-mode auto|reuse|managed
+python -m pip install -e "packages/gfm[research,dev]"
 ```
 
-- `auto` checks explicit interpreters, the last verified profile, the active venv or
-  Conda environment, and an existing managed generation before creating a new one.
-- `reuse` is strictly read-only. It runs imports, exact version checks, `pip check`, PyG
-  ABI checks, NeighborLoader, checkpoint loading, and real forwards without invoking
-  pip writes.
-- `managed` creates separate API and GFM generations under `var/e/`, verifies the new
-  generation, and atomically switches runtime-profile v3.
+研究环境不受 runtime 管理，也不能作为发布运行环境复用。
 
-Explicit interpreters are supported:
-
-```console
-python scripts/socialgraph.py setup --wheel-profile cpu --env-mode reuse \
-  --api-python /absolute/path/to/api/python \
-  --gfm-python /absolute/path/to/gfm/python
-```
-
-The API interpreter must contain FastAPI, HTTPX, NumPy, Pydantic, multipart, Uvicorn,
-and related runtime dependencies, and must not contain Torch. The GFM interpreter must
-match one exact verified wheel profile. Parent `PYTHONPATH`, user-site packages, pip
-configuration, and ambient model-provider credentials are excluded from probes.
-
-### Execution device
-
-The default device policy is `auto`:
-
-```python
-device = requested_device or torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
-)
-```
-
-A CPU wheel always resolves to CPU. A CUDA wheel resolves to CUDA only after CUDA
-availability, tensor operations, and a real model forward all succeed; otherwise
-`auto` uses the verified CPU fallback when CUDA is unavailable. If CUDA is detected but
-the real CUDA forward fails, setup and startup fail closed. `cuda-required` rejects a
-missing or unusable GPU.
-
-Dynamic GPU state is not part of the software fingerprint. Each service start resolves
-the device again and records an execution-environment hash; a running process never
-migrates devices.
-
-## Onboarding and lifecycle
-
-Recommended interactive flow:
+## Onboarding 与生命周期
 
 ```console
 python scripts/socialgraph.py onboard
-python scripts/socialgraph.py start --llm-mode required
+python scripts/socialgraph.py start
 python scripts/socialgraph.py stop
-```
-
-Non-interactive onboarding requires explicit wheel, provider, model, and stdin key
-arguments. For example, with a trusted OpenAI-compatible relay:
-
-```console
-printf '%s\n' "$MODEL_API_KEY" | python scripts/socialgraph.py onboard \
-  --wheel-profile cpu \
-  --device-policy auto \
-  --env-mode managed \
-  --preset custom \
-  --api-base https://relay.example/v1 \
-  --model exact-model-id \
-  --api-mode responses \
-  --auth-scheme bearer \
-  --api-key-stdin
-```
-
-Use `--llm-mode optional|required|disabled` at startup. `required` rejects missing or
-partial configuration; `optional` uses deterministic fallback when configuration is
-absent; `disabled` never loads the private configuration. Startup never installs or
-changes dependencies.
-
-Diagnostics:
-
-```console
 python scripts/socialgraph.py doctor
-python scripts/socialgraph.py doctor --full --test-llm --json
+python scripts/socialgraph.py configure-llm
 ```
 
-Full diagnostics validate runtime fingerprints, wheel backend, GPU driver, bundle
-hashes, Russia 01–04, all four checkpoints, CPU fallback, target task copies, process
-state, and the optional model API. Output never contains keys or environment values.
+`onboard` 自动完成：
 
-## Model API channels
+1. 验证 Windows/Ubuntu x64 与 Python 3.12；
+2. 按操作系统选择唯一 CPU lock；
+3. 在临时目录构建单一环境并运行 import/doctor/smoke；
+4. 验证模型、数据、Governance 索引和预构建 Web manifest；
+5. 验证三项 LLM 配置；
+6. 原子切换到 `var/runtime`，成功后清理旧 API/GFM 环境和 `node_modules`。
 
-The provider wizard separates channel, base URL, protocol, model, timeout,
-authentication, and key. Supported protocols are:
+安装或锁文件变化时不得就地改写当前可用环境。新 generation 验证失败时保留旧环境和用户的案件、模型、数据及私有配置。
 
-- OpenAI Chat Completions
-- OpenAI Responses
-- Anthropic Messages with `anthropic-version: 2023-06-01`
+`start` 不安装依赖，并在启动前再次验证 LLM。API/Web 或 GFM 任一进程未就绪时整体启动失败；`stop` 使用绑定 PID、启动时间、可执行文件和命令身份的记录终止受管进程。
 
-OpenAI-compatible requests default to Bearer authentication. Anthropic-compatible
-requests default to `x-api-key`; a relay may explicitly select Bearer. The final endpoint
-is derived from a root URL, `/v1` base, or complete `/chat/completions`, `/responses`, or
-`/v1/messages` endpoint.
+## 大模型合同
 
-Configuration is written atomically to `var/config/socialgraph-api.env`. Windows uses a
-restricted ACL. POSIX uses a `0700` directory and `0600` file. The launcher clears
-ambient OpenAI, Anthropic, DeepSeek, GLM, Gemini, and other common provider variables,
-then injects only the private `LLM_*` allowlist into the API child.
-
-Provider requests disable environment proxies and redirects, cap responses at 2 MiB,
-and classify failures as authentication, endpoint/protocol, request/model, rate limit,
-upstream, timeout, network/TLS, or invalid response. A structured-output retry is
-allowed only for an explicit 400/422 unsupported-field response.
-
-## Models and data
-
-`bundles/models/socialgraph-global/` contains four immutable protocol checkpoints:
-
-| Protocol | Purpose | Runtime status |
-| --- | --- | --- |
-| Global | Multi-domain primary model | Online serving |
-| In-domain | Fully supervised target-domain reference | Frozen comparison |
-| Low-label | Label-limited target-domain reference | Frozen comparison |
-| Cross-domain | Source-only transfer reference | Frozen comparison |
-
-Checkpoint envelopes bind the release, coordination-risk task, protocol, model version,
-model-state hash, expert mask, model configuration, and tensor state. Rebranding changes
-packaging identities but not tensor-state hashes. The model card records intended use,
-limitations, metrics, licensing, and research provenance.
-
-`examples/governance/russia/` contains Russia 01–04 and one full input. The target-domain
-directory contains zero-shot and few-shot task archives bound by catalog and receipt
-hashes. Setup verifies the tracked runtime manifest and installs model, knowledge,
-reviewed cases, examples, and target upload copies without modifying tracked files.
-
-The public runtime does not include the full six-country training corpus, training runs,
-or preliminary Research runtime artifacts. Training and Research source code remains
-available, but the public release promises the complete user workflow rather than full
-training reproduction.
-
-## Governance Skills
-
-`skills/governance/catalog.json` is the only source of truth for the eight public
-Skills. API models, GFM commands, generated TypeScript types, JSON Schemas, examples,
-and tests must match its exact order and permissions.
-
-`run_governance_analysis` and persistence through `draft_review_report` require a
-short-lived confirmation ticket. Tickets bind the command, parameters, graph version,
-model version, model state, and relevant artifact hashes. Read-only Skills cannot write
-review or report state.
-
-Core Skills under `skills/core/` have a separate namespace and are never merged into the
-Governance catalog. These are product contracts, not agent configuration files.
-Names, parameter Schemas, API routes, implementation mapping, provenance hashes,
-confirmation behavior, and per-Skill failure boundaries are listed in the
-[Skills reference](../skills/README.md) and
-[Chinese Skills reference](../skills/README.zh-CN.md).
-
-## Experimental Core readiness
-
-`docs/status/readiness.json` mirrors the machine record for the experimental
-SocialGraph-FM Core milestone. Its gates describe formal Core corpus evidence, model
-acceptance, accepted-candidate evidence, and an independent Core serving smoke. A false
-gate means that the corresponding experimental Core research artifact has not been
-installed; it does not mean that the complete Governance user runtime, Global model,
-four-protocol comparison, or reviewed-case workflow is unavailable.
-
-## Public and internal APIs
-
-The public surface contains exactly 96 method/path pairs. SocialGraph-FM Global uses
-`/api/v1/gfm/global-model/*`; Governance uses `/api/v2/gfm/governance/*`; Research uses
-`/api/v1/gfm/research/*`; general Core orchestration remains below `/api/v1/gfm/*`.
-Branded predecessor routes are intentionally absent.
-
-The GFM process exposes authenticated internal Global, Governance, Core, and Research
-routes only on loopback. Public and internal payload limits, archive safety checks, and
-Pydantic validation are independent.
-
-## Runtime state
-
-All mutable state is ignored below `var/`:
+私有配置只包含：
 
 ```text
-var/config/                 Private configuration and runtime profile
-var/e/                      Managed Python generations
-var/models/socialgraph-global/
-var/gfm/governance/        Uploads, runs, knowledge, and reviewed cases
-var/gfm/core-runtime/      Core serving and API stores
-var/gfm/research/          Research runtime state
-var/governance/            Target adaptation inputs
-var/deploy/                Logs and PID records
+LLM_API_BASE
+LLM_MODEL
+LLM_API_KEY
 ```
 
-PID records bind process ID, start time, executable, and command identity. Windows uses
-independent process groups; POSIX uses sessions and process groups with TERM followed by
-bounded KILL. Stop refuses to terminate a reused PID whose identity no longer matches.
+固定行为：
 
-## Troubleshooting
+- OpenAI-compatible `/chat/completions`；
+- Bearer 鉴权；
+- 远程 HTTPS，本机回环可 HTTP；
+- 15 秒超时、temperature 0、最多 700 tokens；
+- 禁止重定向和继承环境代理；
+- 响应上限、JSON/Schema 校验和一次结构化修复请求。
 
-- **Python rejected:** use CPython 3.12 and rerun setup with an explicit bootstrap
-  interpreter if necessary.
-- **API environment rejected:** remove Torch from the API environment or let managed
-  mode create a separate environment.
-- **GFM environment rejected:** choose a catalog wheel profile that exactly matches
-  Python, platform, Torch, PyG, and compiled extensions.
-- **CUDA wheel falls back to CPU:** run `doctor --full`; inspect driver availability,
-  `torch.version.cuda`, `torch.cuda.is_available()`, and the real-forward result.
-- **Startup reports profile drift:** the recorded environment changed; rerun setup.
-- **Model installation rejected:** do not edit bundled files. Restore the checkout and
-  rerun setup from an empty ignored model destination.
-- **Model API test fails:** edit only the reported base, model, protocol, authentication,
-  or key field and retry. Response bodies and credentials are deliberately hidden.
-- **Ports unavailable:** stop the owning process or configure the supported loopback
-  port environment variables before startup.
+配置器接受 API 根地址、`/v1` 或完整 `/chat/completions`，规范化后进行真实的最小安全请求。验证成功前不保存。旧 Chat Completions + Bearer 配置可迁移三字段并重新验证；Responses、Anthropic 或其他协议必须重新填写兼容 API。
 
-## Development and release checks
+意图理解、构图意图和 Assistant Skills 均要求 LLM。未配置、401/403、404 模型错误、429、超时、非法 JSON 或越界内容会显式失败，不会切换本地规则或生成确定性替代叙述。确定性图算法、输入校验、Skill 结果校验和人工确认仍保留，它们是证据/安全边界，不是 LLM 备选项。
 
-Required CI is intentionally limited to repository policy, Web on Ubuntu, API on
-Ubuntu, Runtime on Windows/Ubuntu, GFM CPU on Windows/Ubuntu, and CPU onboarding from a
-clean clone on Windows/Ubuntu. macOS ARM64 lifecycle diagnostics are a separate
-best-effort workflow. Dependency audits run as scheduled or manual reports and do not
-make the main correctness workflow fail.
+## Skills 与 API
 
-Run the relevant local checks before publication:
+完整映射见 [Skills 索引](../skills/README.md)。
+
+底层 Governance Skills：
+
+```text
+GET  /api/v2/gfm/governance/skills
+POST /api/v2/gfm/governance/skills/execute
+POST /api/v2/gfm/governance/skills/{skill}/execute
+POST /api/v2/gfm/governance/skills/confirm
+```
+
+LLM Assistant Skills：
+
+```text
+GET  /api/v2/gfm/governance/assistant/skills
+POST /api/v2/gfm/governance/assistant/execute
+```
+
+Assistant 请求使用 `socialgraph-fm.assistant-skill-request/1.0`，明确指定 6 个只读 Skill 之一；响应使用 `socialgraph-fm.assistant-skill-result/1.0`，包含执行 ID、答案、证据结果、底层只读调用 trace、证据引用、引用哈希和审计哈希。旧的 assistant turn/dispatch 组合接口不再属于公开合同。
+
+`run_governance_analysis` 与 `draft_review_report` 仍通过 Governance confirmation ticket 完成模型执行或持久化；Assistant Skills 不得调用这两个写操作。
+
+## 模型、数据与身份
+
+仓库发布 Global、In-domain、Low-label、Cross-domain checkpoint，Russia 01–04/完整输入、zero/few-shot 目标任务、Governance 知识索引和已审结案例。完整训练语料、训练运行、缓存、凭据和本地用户状态不发布。
+
+模型状态、数据内容、图版本、运行结果、目标任务、适配策略、案例 revision、知识块和报告来源均使用稳定哈希绑定。普通 CSV/JSON/GraphML/GEXF 只进入结构分析；只有通过输入合同和来源校验的 Global 推理包可进入模型路径。
+
+普通图结果不得标记为模型预测；潜在线索不得标记为事实边；目标域适配分数保留 Global 校准语义并需要独立验证。
+
+## 运行状态
+
+```text
+var/runtime/             唯一受管 Python 环境
+var/config/              私有三字段 LLM 配置
+var/run/                 PID、端口、令牌和生命周期记录
+var/logs/                脱敏日志
+var/state/               图谱、案件、复核和会话状态
+var/examples/            onboarding 展开的用户示例
+```
+
+`var/` 全部被 Git 忽略。Windows 私有配置使用受保护 DACL；POSIX 使用 0600 文件、0700 目录、原子替换和目录 fsync。密钥不得进入异常文本、诊断 JSON、测试 fixture 或环境快照。
+
+## Web 开发
+
+只有修改前端源码的开发者需要 Node/npm：
 
 ```console
-python -m pytest tests/test_publication_policy.py
-python -m pytest packages/runtime/tests
-python -m pytest services/api/tests
-python -m pytest packages/gfm/tests
+npm --prefix apps/web ci
 npm --prefix apps/web run typecheck
 npm --prefix apps/web test -- --run
 npm --prefix apps/web run build
 npm --prefix apps/web run test:e2e:offline
 ```
 
-API and GFM checks must use separate development environments so the API remains
-Torch-free. Contract changes require catalog/API/GFM/Web parity tests and regenerated
-checked artifacts. Documentation changes require valid relative links and a
-deterministic rebuild of the Governance knowledge index and runtime manifest.
+CI 生成确定性的 `bundles/web/client.zip` 及哈希 manifest。Web 源码变化而 bundle 未更新时 publication check 失败。生产构建默认使用同源相对 `/api` URL；本地 Vite 开发可显式设置 API base/proxy。
 
-Windows CUDA is a release gate, not a permanent daily runner. For a release candidate,
-bring the self-hosted GPU runner online, run full doctor diagnostics, a real checkpoint
-forward, CPU fallback, and Governance smoke, and retain the JSON report. Daily CI checks
-only the CUDA lock/profile contract.
+## 发布校验
 
-Publication artifacts are created through
-`python scripts/socialgraph.py export-github`; the tool produces a clean repository and
-a ZIP containing the same tracked bytes without `.git`.
+Required CI 固定覆盖 repository policy、Web 构建、API/Python、runtime、GFM CPU 和 clean runtime，Windows/Ubuntu 各自从 clean clone 与 GitHub Download ZIP 验证。验收至少包括：
+
+- 单环境中不存在 CUDA、OGB、训练/dev 依赖、Node/npm 或第二个 venv；
+- 四类 checkpoint、Russia forward、固定邻居采样、Global smoke 和目标域流程；
+- 三项 LLM 配置成功与认证、模型、限流、超时、非法结构失败；
+- 6 个 Assistant Skills 与 8 个 Governance Skills 的名称、顺序、权限和调用链一致；
+- Web 单测/E2E、API/runtime/GFM 全量测试以及 secret、publication、contract、knowledge、bundle 和 manifest 校验。
+
+`docs/status/readiness.json` 仅表示实验 Core 的研究和 serving gate，不影响 Governance 用户运行版。

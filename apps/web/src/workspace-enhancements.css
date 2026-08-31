@@ -614,11 +614,6 @@
   line-height: 1;
 }
 
-.status-pill.is-fallback {
-  color: #9b6628;
-  background: #fff7e8;
-}
-
 .graph-column__collapsed-rail button {
   display: grid;
   width: 34px;
@@ -836,7 +831,6 @@
   font-size: var(--font-size-caption);
 }
 
-.diagnostic-status.is-fallback,
 .diagnostic-status.is-warning {
   color: #9b6628;
   background: #fff6e9;

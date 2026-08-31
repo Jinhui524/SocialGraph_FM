@@ -554,12 +554,6 @@ button:disabled {
   background: #f2fbf8;
 }
 
-.status-pill.is-fallback {
-  border-color: #f1dfbd;
-  color: #a66a22;
-  background: #fffaf0;
-}
-
 .status-pill.is-offline,
 .status-pill.is-gfm.is-unavailable {
   border-color: #e6e7f0;
@@ -874,11 +868,6 @@ button:disabled {
 .source-chip.is-llm {
   color: #258f70;
   background: #ebf8f4;
-}
-
-.source-chip.is-deterministic_fallback {
-  color: #a66a22;
-  background: #fff4df;
 }
 
 .user-message-body {

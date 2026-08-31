@@ -186,7 +186,7 @@ class GovernanceHealth(FrozenModel):
     model_state_hash: str | None = Field(
         default=None, alias="modelStateHash", pattern=HASH_PATTERN
     )
-    device: Literal["cpu", "cuda"]
+    device: Literal["cpu"]
     dtype: Literal["float32", "float16", "bfloat16"]
     loaded_at: datetime | None = Field(default=None, alias="loadedAt")
     queue_depth: int = Field(alias="queueDepth", ge=0)

@@ -988,7 +988,7 @@ class FakeOnlineClient:
                 "modelVersionId": self.model_id,
                 "modelVersionHash": self.model_hash,
                 "modelStateHash": self.state_hash,
-                "device": "cuda",
+                "device": "cpu",
                 "dtype": "float16",
                 "loadedAt": "2026-08-18T00:00:00Z",
                 "queueDepth": 0,

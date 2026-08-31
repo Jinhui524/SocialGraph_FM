@@ -113,7 +113,7 @@ describe("graphVersionFromDatasetArtifact", () => {
         filters: {},
         meta: {
           schemaVersion: "1.1",
-          source: "deterministic_fallback",
+          source: "llm",
           requestId: "projection-test",
           warnings: [],
         },

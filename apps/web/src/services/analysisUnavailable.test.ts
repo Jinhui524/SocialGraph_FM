@@ -60,7 +60,7 @@ describe("analysis unavailable messaging", () => {
         filters: {},
         meta: {
           schemaVersion: "1.1" as const,
-          source: "deterministic_fallback" as const,
+          source: "llm" as const,
           requestId: "request-1",
           warnings: [],
         },

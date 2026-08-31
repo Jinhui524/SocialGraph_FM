@@ -9,10 +9,7 @@ import type {
   IntentMeta,
   NormalizedIntent,
 } from "../../types/graph";
-import type {
-  GovernanceAssistantDispatchIntent,
-  GovernanceConfirmationTicket,
-} from "../../types/governanceSkills";
+import type { GovernanceConfirmationTicket } from "../../types/governanceSkills";
 import type {
   GovernanceOnlineRun,
   GovernanceOnlineStage,
@@ -39,7 +36,6 @@ export type ChatEntry =
       demo?: boolean;
       retryText?: string;
       confirmation?: GovernanceConfirmationTicket;
-      dispatchIntent?: GovernanceAssistantDispatchIntent;
       activity?: AssistantActivity;
       governanceProgress?: {
         readonly stage: GovernanceProgressStage;
@@ -159,7 +155,7 @@ function assistantActivityKind(
   entry: Extract<ChatEntry, { role: "assistant" }>,
 ): AssistantActivityKind {
   if (entry.activity) return entry.activity.kind;
-  if (entry.confirmation || entry.dispatchIntent) return "governance";
+  if (entry.confirmation) return "governance";
   return "graph_analysis";
 }
 

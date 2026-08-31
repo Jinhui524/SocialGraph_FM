@@ -114,34 +114,35 @@ class RuntimeLayout:
         return self.project_root / "apps" / "web"
 
     @property
+    def runtime_environment(self) -> Path:
+        """The only public Python environment used by both managed processes."""
+
+        return self.var_root / "runtime"
+
+    @property
+    def web_bundle_root(self) -> Path:
+        return self.project_root / "bundles" / "web"
+
+    @property
+    def web_bundle_manifest(self) -> Path:
+        return self.web_bundle_root / "manifest.json"
+
+    @property
+    def web_bundle_archive(self) -> Path:
+        return self.web_bundle_root / "client.zip"
+
+    @property
+    def web_client_root(self) -> Path:
+        return self.var_root / "web" / "client"
+
+    @property
     def managed_environment_root(self) -> Path:
-        # Keep Windows wheel extraction safely below MAX_PATH even when the
-        # repository itself was unpacked into a moderately deep directory.
+        # Legacy split-environment root retained only so onboarding can remove it.
         return self.var_root / "e"
 
     @property
     def legacy_managed_environment_root(self) -> Path:
         return self.var_root / "envs" / "managed"
-
-    def managed_environment(self, capability: str, generation: str) -> Path:
-        if capability not in {"api", "gfm"}:
-            raise ValueError(f"Unsupported managed environment capability: {capability}")
-        if not generation or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in generation):
-            raise ValueError(f"Invalid managed environment generation: {generation}")
-        namespace = "a" if capability == "api" else "g"
-        return self.managed_environment_root / namespace / generation
-
-    def gfm_environment(self, profile_id: str) -> Path:
-        # Preserve the established public environment paths while the profile ID
-        # carries the platform-specific wheel identity in runtime-profile/3.0.
-        if "-cpu-" in profile_id:
-            name = "gfm-cpu"
-        elif "-cu130-" in profile_id:
-            name = "gfm-cu130-clean"
-        else:
-            safe = profile_id.replace("/", "-").replace("\\", "-")
-            name = f"gfm-{safe}"
-        return self.var_root / "envs" / name
 
     @property
     def gfm_home(self) -> Path:

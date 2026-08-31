@@ -6,17 +6,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from socialgraph_gfm.cli import main
+import socialgraph_gfm.runtime as runtime_module
+from socialgraph_gfm.cli import build_parser, main
 from socialgraph_gfm.errors import RunCancelled
 from socialgraph_gfm.preflight import preflight_report
 from socialgraph_gfm.runtime import RunContext, runtime_report
-import socialgraph_gfm.runtime as runtime_module
+
+
+@pytest.mark.parametrize("command", ["doctor", "materialize", "smoke", "preflight"])
+def test_public_runtime_commands_do_not_offer_device_selection(command):
+    parser = build_parser()
+    action = parser._subparsers._group_actions[0].choices[command]
+    assert "--device" not in action._option_string_actions
 
 
 def test_preflight_root_writability_uses_nearest_existing_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import socialgraph_gfm.preflight as preflight
+    from socialgraph_gfm import preflight
 
     existing_parent = tmp_path / "user-writable-runtime-parent"
     existing_parent.mkdir()
@@ -40,7 +47,7 @@ def test_preflight_root_writability_uses_nearest_existing_parent(
 
 
 def test_doctor_is_machine_readable_and_runtime_status_is_honest(capsys, tmp_path):
-    result = main(["doctor", "--device", "cpu", "--root", str(tmp_path), "--json"])
+    result = main(["doctor", "--root", str(tmp_path), "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert payload["schemaVersion"] == "gfm.doctor/1.0"
     assert isinstance(payload["missing"], list)
@@ -66,7 +73,7 @@ def test_preflight_keeps_independent_readiness_gates(tmp_path):
 def test_preflight_can_validate_pretraining_while_product_and_model_stay_false(
     tmp_path, monkeypatch
 ):
-    import socialgraph_gfm.preflight as preflight
+    from socialgraph_gfm import preflight
 
     hashes = {
         "openalex-graph-ai": "a" * 64,
@@ -124,7 +131,7 @@ def test_preflight_can_validate_pretraining_while_product_and_model_stay_false(
         "_gfm_pretraining_acceptance_evidence",
         lambda *_args, **_kwargs: {"ready": True},
     )
-    monkeypatch.setattr(preflight, "gfm_optional_runtime_report", lambda: {})
+    monkeypatch.setattr(preflight, "gfm_optional_runtime_report", dict)
     monkeypatch.setattr(preflight, "_storage_evidence", lambda *_args: {})
 
     readiness = preflight.preflight_report(root=tmp_path)["readiness"]
@@ -142,7 +149,7 @@ def test_materialize_fails_clearly_when_runtime_is_absent(capsys, tmp_path):
     result = main(
         [
             "materialize", "--fixture", "actor", "--output", str(tmp_path / "out"),
-            "--device", "cpu", "--json",
+            "--json",
         ]
     )
     payload = json.loads(capsys.readouterr().out)
@@ -162,36 +169,24 @@ def test_run_context_honours_cancellation_marker(tmp_path):
         context.check_cancelled()
 
 
-@pytest.mark.parametrize("wrong_tag", ["2.12.0+cpu", "2.12.0+cu128"])
-def test_cuda_doctor_rejects_wrong_torch_local_wheel_tag(monkeypatch, wrong_tag):
-    pytest.importorskip("torch")
+def test_cuda_runtime_is_explicitly_unpublished(monkeypatch):
     monkeypatch.setattr(runtime_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(runtime_module.platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(
         runtime_module,
         "_version",
         lambda name: {
             "pydantic": "2.13.4",
             "numpy": "2.3.3",
-            "torch": wrong_tag,
+            "torch": "2.8.0+cpu",
             "torch_geometric": "2.8.0.post1",
-            "ogb": "1.3.6",
-            "pyg_lib": "0.7.0+pt212cu130",
+            "pyg_lib": "0.6.0+pt28cpu",
         }.get(name),
     )
     report = runtime_report("cuda")
-    assert any(item["package"] == "torch" for item in report["mismatches"])
-
-
-def test_windows_cu130_wheel_can_execute_cpu_without_switching_to_cpu_profile():
-    if platform.system() != "Windows":
-        pytest.skip("Windows profile selection test")
-    cuda_report = runtime_report("cuda")
-    if cuda_report["versions"].get("torch") != "2.12.0+cu130":
-        pytest.skip("exact cu130 wheel is not installed")
-    cpu_report = runtime_report("cpu")
-    assert cpu_report["selectedProfile"] == "windows-cu130"
-    assert cpu_report["runtimeReady"] is True
-    assert cpu_report["cuda"]["requested"] is False
+    assert report["runtimeReady"] is False
+    assert any(item["package"] == "device" for item in report["mismatches"])
+    assert "cuda" not in report
 
 
 def test_windows_cpu_wheel_selects_the_dedicated_profile():
@@ -205,7 +200,7 @@ def test_windows_cpu_wheel_selects_the_dedicated_profile():
     assert report["versions"]["pyg_lib"] == "0.6.0+pt28cpu"
 
 
-def test_macos_arm64_cpu_selects_the_verified_platform_profile(monkeypatch):
+def test_macos_arm64_is_not_a_public_runtime_profile(monkeypatch):
     monkeypatch.setattr(runtime_module.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(runtime_module.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(runtime_module.platform, "libc_ver", lambda: ("", ""))
@@ -215,18 +210,17 @@ def test_macos_arm64_cpu_selects_the_verified_platform_profile(monkeypatch):
         lambda name: {
             "pydantic": "2.13.4",
             "numpy": "2.3.3",
-            "torch": "2.8.0",
+            "torch": "2.8.0+cpu",
             "torch_geometric": "2.8.0.post1",
-            "ogb": "1.3.6",
-            "pyg_lib": "0.6.0+pt28",
+            "pyg_lib": "0.6.0+pt28cpu",
         }.get(name),
     )
 
     report = runtime_report("cpu")
 
-    assert report["selectedProfile"] == "macos-arm64-cpu"
-    assert report["installProfile"] == "macos-arm64-cpu-pt28"
-    assert report["runtimeReady"] is True
+    assert report["selectedProfile"] is None
+    assert report["installProfile"] is None
+    assert report["runtimeReady"] is False
 
 
 @pytest.mark.parametrize(
@@ -255,4 +249,5 @@ def test_runtime_report_rejects_unpublished_platform_profiles(
     assert report["selectedProfile"] is None
     assert report["installProfile"] is None
     assert report["runtimeReady"] is False
-    assert any(item["package"] == "platform" for item in report["mismatches"])
+    expected = "device" if device == "cuda" else "platform"
+    assert any(item["package"] == expected for item in report["mismatches"])

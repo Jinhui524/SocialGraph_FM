@@ -14,7 +14,7 @@ const intent: NormalizedIntent = {
   filters: {},
   meta: {
     schemaVersion: "1.1",
-    source: "deterministic_fallback",
+    source: "llm",
     requestId: "scope-request",
     warnings: [],
   },

@@ -246,8 +246,7 @@ try {
   . (Join-Path $PSScriptRoot "Enter-GfmRuntime.ps1") `
     -RuntimeRoot $RuntimeRoot `
     -GfmPython $GfmPython `
-    -Operation run `
-    -DependencyProfile text | Out-Null
+    -Operation run | Out-Null
   $env:PYTHONPATH = Join-Path $repositoryRoot "src"
   $script:expectedCodeHash = Get-CodeIdentity
   Write-OwnerRecord

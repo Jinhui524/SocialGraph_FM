@@ -8,6 +8,10 @@ import sys
 from collections.abc import Sequence
 
 import uvicorn
+from pydantic import ValidationError
+
+from .config import Settings
+from .provider_check import verify_provider
 
 
 def selector_event_loop_factory() -> asyncio.AbstractEventLoop:
@@ -16,7 +20,7 @@ def selector_event_loop_factory() -> asyncio.AbstractEventLoop:
 
 
 def managed_api_port() -> int:
-    raw = os.environ.get("SOCIALGRAPH_CORE_API_PORT", "8000")
+    raw = os.environ.get("SOCIALGRAPH_CORE_API_PORT", "5173")
     try:
         port = int(raw)
     except ValueError as error:
@@ -42,6 +46,13 @@ def managed_runtime_identity(arguments: Sequence[str]) -> str:
 def main(arguments: Sequence[str] | None = None) -> None:
     if arguments is not None:
         managed_runtime_identity(arguments)
+    try:
+        llm_configured = Settings().llm_configured
+    except ValidationError:
+        llm_configured = False
+    if not llm_configured:
+        raise RuntimeError("LLM_API_BASE, LLM_MODEL, and LLM_API_KEY are required")
+    asyncio.run(verify_provider())
     uvicorn.run(
         "app.main:app",
         host="127.0.0.1",

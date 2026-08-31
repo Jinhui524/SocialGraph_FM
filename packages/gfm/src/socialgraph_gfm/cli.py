@@ -102,7 +102,6 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     doctor = subparsers.add_parser("doctor", help="Inspect exact runtime compatibility")
-    doctor.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     doctor.add_argument("--root", default=None)
     doctor.add_argument("--json", action="store_true")
 
@@ -120,18 +119,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     materialize_parser.add_argument("--output", required=True)
-    materialize_parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     materialize_parser.add_argument("--json", action="store_true")
 
     smoke_parser = subparsers.add_parser("smoke", help="Run one synthetic autograd step")
     smoke_parser.add_argument("--fixture", choices=("actor", "hetero", "both"), default="both")
-    smoke_parser.add_argument("--device", choices=("cpu", "cuda"), required=True)
     smoke_parser.add_argument("--root", default=None)
     smoke_parser.add_argument("--seed", type=int, default=DEFAULT_SMOKE_SEED)
     smoke_parser.add_argument("--json", action="store_true")
 
     preflight_parser = subparsers.add_parser("preflight", help="Aggregate independent readiness gates")
-    preflight_parser.add_argument("--device", choices=("cpu", "cuda"), required=True)
     preflight_parser.add_argument("--root", default=None)
     preflight_parser.add_argument("--json", action="store_true")
 
@@ -408,24 +404,24 @@ def main(argv: list[str] | None = None) -> int:
     as_json = bool(getattr(args, "json", False))
     try:
         if args.command == "doctor":
-            payload = runtime_report(args.device)
+            payload = runtime_report("cpu")
             payload["artifactRoot"] = str(artifact_root(args.root))
             payload["runtimeLocks"] = verify_lock_manifest()
             payload["runtimeReady"] = payload["runtimeReady"] and payload["runtimeLocks"]["releaseLocksReady"]
             _print(payload, as_json)
             return 0 if payload["runtimeReady"] else 2
         if args.command == "materialize":
-            payload = _materialize_command(args.fixture, args.output, args.device)
+            payload = _materialize_command(args.fixture, args.output, "cpu")
             _print(payload, as_json)
             return 0
         if args.command == "smoke":
             payload = run_smoke(
-                fixture=args.fixture, device=args.device, root=args.root, seed=args.seed
+                fixture=args.fixture, device="cpu", root=args.root, seed=args.seed
             )
             _print(payload, as_json)
             return 0
         if args.command == "preflight":
-            payload = preflight_report(device=args.device, root=args.root)
+            payload = preflight_report(device="cpu", root=args.root)
             _print(payload, as_json)
             return 0 if payload["readiness"]["GfmInfrastructureReady"] else 3
         if args.command == "corpus-fetch-ogbl-collab":

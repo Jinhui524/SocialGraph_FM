@@ -616,7 +616,7 @@ export interface GraphBuildIntentResult {
   readonly requestToken: string;
   readonly baseGraphVersionId?: string;
   readonly spec: GraphBuildSpec;
-  readonly source: "llm" | "deterministic_fallback";
+  readonly source: "llm";
   readonly warnings: readonly string[];
 }
 
@@ -629,7 +629,7 @@ export type ChatIntentInput = NormalizeIntentInput;
 
 export interface IntentMeta {
   readonly schemaVersion: "1.0" | "1.1";
-  readonly source: "llm" | "deterministic_fallback";
+  readonly source: "llm";
   readonly requestId: string;
   readonly model?: string;
   readonly warnings: readonly string[];

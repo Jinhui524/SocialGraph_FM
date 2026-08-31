@@ -27,11 +27,11 @@ async def test_health_and_capabilities_without_llm(api_client: httpx.AsyncClient
     body = response.json()
     assert body["intentNormalization"] == {
         "configured": False,
-        "mode": "deterministic_fallback",
+        "mode": "llm_required",
         "provider": None,
         "model": None,
         "apiMode": "chat_completions",
-        "connectionStatus": "fallback",
+        "connectionStatus": "not_configured",
     }
     assert body["analysis"]["gfmConnected"] is False
     assert body["dataBoundary"]["sendsRawGraph"] is False
@@ -61,7 +61,7 @@ async def test_cors_allows_only_configured_frontend(api_client: httpx.AsyncClien
 
 
 @pytest.mark.anyio
-async def test_deterministic_fallback_returns_analysis_and_time_range(
+async def test_normalization_requires_configured_llm(
     api_client: httpx.AsyncClient,
 ) -> None:
     response = await api_client.post(
@@ -69,36 +69,41 @@ async def test_deterministic_fallback_returns_analysis_and_time_range(
         headers={"X-Request-ID": "frontend-request-1"},
         json={"text": "分析 2020 至 2024 年的核心节点和影响力"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 503
     assert response.headers["X-Request-ID"] == "frontend-request-1"
-    body = response.json()
-    assert body["kind"] == "analysis_request"
-    assert body["task"] == "centrality"
-    assert body["timeRange"] == {"start": "2020", "end": "2024"}
-    assert body["filters"] == {"startYear": "2020", "endYear": "2024"}
-    assert body["meta"]["source"] == "deterministic_fallback"
-    assert body["meta"]["schemaVersion"] == "1.1"
-    assert body["meta"]["warnings"] == ["LLM_NOT_CONFIGURED"]
+    assert response.json() == {"detail": {"code": "LLM_NOT_CONFIGURED"}}
 
 
 @pytest.mark.anyio
-async def test_deterministic_fallback_supports_normal_chat(api_client: httpx.AsyncClient) -> None:
+async def test_normal_chat_has_no_unconfigured_fallback(api_client: httpx.AsyncClient) -> None:
     response = await api_client.post("/api/v1/intents/normalize", json={"text": "你好，你能做什么？"})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["kind"] == "chat"
-    assert body["meta"]["source"] == "deterministic_fallback"
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "LLM_NOT_CONFIGURED"}}
 
 
 @pytest.mark.anyio
 async def test_json_response_declares_utf8_and_preserves_chinese_bytes(
-    api_client: httpx.AsyncClient,
 ) -> None:
     chinese_text = "识别桥接节点"
-    response = await api_client.post(
-        "/api/v1/intents/normalize",
-        json={"text": chinese_text},
+    provider = SequenceProvider(
+        [
+            {
+                "kind": "analysis_request",
+                "normalizedText": chinese_text,
+                "task": "bridge_detection",
+                "targets": [],
+                "confidence": 0.9,
+                "filters": {},
+            }
+        ]
     )
+    app = create_app(Settings(), provider=provider)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/intents/normalize", json={"text": chinese_text}
+        )
 
     assert response.status_code == 200
     assert response.headers["Content-Type"] == "application/json; charset=utf-8"
@@ -148,7 +153,8 @@ async def test_graph_context_accepts_only_allowlisted_summary(api_client: httpx.
         "/api/v1/intents/normalize",
         json={"text": "给出图谱概览", "graphContext": valid_context},
     )
-    assert accepted.status_code == 200
+    assert accepted.status_code == 503
+    assert accepted.json() == {"detail": {"code": "LLM_NOT_CONFIGURED"}}
 
     rejected = await api_client.post(
         "/api/v1/intents/normalize",
@@ -423,7 +429,7 @@ async def test_invalid_model_output_gets_one_repair_attempt() -> None:
 
 
 @pytest.mark.anyio
-async def test_low_confidence_defaults_to_overview() -> None:
+async def test_low_confidence_is_returned_for_explicit_review() -> None:
     provider = SequenceProvider(
         [
             {
@@ -443,8 +449,8 @@ async def test_low_confidence_defaults_to_overview() -> None:
     ) as client:
         response = await client.post("/api/v1/intents/normalize", json={"text": "也许分析一下"})
     body = response.json()
-    assert body["task"] == "overview"
-    assert "LOW_CONFIDENCE_DEFAULTED_TO_OVERVIEW" in body["meta"]["warnings"]
+    assert body["task"] == "link_prediction"
+    assert "LOW_CONFIDENCE_REQUIRES_REVIEW" in body["meta"]["warnings"]
 
 
 def test_evaluation_fixture_has_at_least_50_cases() -> None:

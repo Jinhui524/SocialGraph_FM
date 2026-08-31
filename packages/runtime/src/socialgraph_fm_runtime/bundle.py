@@ -29,6 +29,7 @@ ALLOWED_ROOTS = (
     "bundles/models/socialgraph-global",
     "bundles/governance/knowledge",
     "bundles/governance/reviewed-cases",
+    "bundles/web",
     "examples/governance/russia",
     "examples/governance/target-domain",
 )
@@ -63,7 +64,7 @@ from socialgraph_gfm.governance.materialize import (
 
 model_root = Path(sys.argv[1]).resolve(strict=True)
 bundle_path = Path(sys.argv[2]).resolve(strict=True)
-device = sys.argv[3]
+device = "cpu"
 runtime_root = Path(tempfile.mkdtemp(prefix="sgfm-forward-probe-"))
 try:
     _validate_zip(bundle_path)
@@ -670,12 +671,10 @@ def verify_gfm_runtime_state(
 
 
 def run_checkpoint_forward_probe(
-    layout: RuntimeLayout, python: Path, *, device: str
+    layout: RuntimeLayout, python: Path
 ) -> dict[str, Any]:
     """Run all four frozen checkpoints only after installed assets verify exactly."""
 
-    if device not in {"cpu", "cuda"}:
-        raise RuntimeError(f"Unsupported checkpoint forward device: {device}")
     bundle = load_and_verify_bundle(layout)
     verify_installed_runtime_bundle(layout, bundle)
     completed = run_clean_python(
@@ -687,7 +686,7 @@ def run_checkpoint_forward_probe(
             "--root",
             str(layout.model_root),
             "--device",
-            device,
+            "cpu",
         ),
         python_path=str(layout.gfm_package / "src"),
         cwd=layout.gfm_package,
@@ -707,7 +706,7 @@ def run_checkpoint_forward_probe(
         or report.get("schemaVersion") != CHECKPOINT_FORWARD_SCHEMA
         or report.get("passed") is not True
         or report.get("readOnly") is not True
-        or report.get("device") != device
+        or report.get("device") != "cpu"
         or report.get("protocolCount") != 4
         or not isinstance(protocols, list)
         or [item.get("protocol") for item in protocols if isinstance(item, dict)]
@@ -900,7 +899,6 @@ def run_full_gfm_probe(
     layout: RuntimeLayout,
     python: Path,
     *,
-    device: str,
     use_installed_model: bool = False,
 ) -> dict[str, Any]:
     """Run a real Russia graph forward through the bundled Global checkpoint."""
@@ -934,7 +932,7 @@ def run_full_gfm_probe(
             )
             completed = run_clean_python(
                 python,
-                ("-c", _FORWARD_PROBE_SOURCE, str(model_root), str(russia), device),
+                ("-c", _FORWARD_PROBE_SOURCE, str(model_root), str(russia)),
                 python_path=str(layout.gfm_package / "src"),
                 cwd=layout.gfm_package,
                 timeout=600,

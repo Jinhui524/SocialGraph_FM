@@ -79,29 +79,6 @@ function policiesFromDescription(description: string) {
   return { duplicateEdgePolicy, selfLoopPolicy, timeFormat };
 }
 
-function fallbackSpec(input: GraphBuildIntentInput): GraphBuildSpec {
-  const edgeFile = input.files.find((file) => file.role === "edges")
-    ?? input.files.find((file) => inferEdgeMapping(file.columns))
-    ?? input.files[0];
-  const nodeFile = input.files.find((file) => file.role === "nodes")
-    ?? (input.files.length === 2 ? input.files.find((file) => file !== edgeFile) : undefined);
-  const standardGraph = input.files.length === 1 && ["json", "graphml", "gexf"].includes(input.files[0]?.format ?? "");
-  const describedPolicies = policiesFromDescription(input.description);
-  return Object.freeze({
-    schemaVersion: "1.0",
-    inputShape: standardGraph ? "standard_graph" : input.files.length === 2 ? "node_edge_tables" : "edge_table",
-    sourceArtifactIds: Object.freeze(input.files.map((file) => file.artifactId)),
-    ...(nodeFile ? { nodeMapping: inferNodeMapping(nodeFile.columns) } : {}),
-    ...(edgeFile ? { edgeMapping: inferEdgeMapping(edgeFile.columns) } : {}),
-    directionPolicy: standardGraph ? "file" : /无向/u.test(input.description) ? "undirected" : /有向/u.test(input.description) ? "directed" : "undirected",
-    duplicateEdgePolicy: describedPolicies.duplicateEdgePolicy,
-    selfLoopPolicy: describedPolicies.selfLoopPolicy,
-    danglingEndpointPolicy: input.files.length === 2 ? "reject" : "derive_nodes",
-    timeFormat: describedPolicies.timeFormat,
-    ...(input.description.trim() ? { description: input.description.trim().slice(0, 2_000) } : {}),
-  });
-}
-
 interface GraphBuildApiPayload {
   readonly description: string;
   readonly columnProfiles?: readonly GraphBuildApiColumnProfile[];
@@ -191,7 +168,8 @@ function parseResponse(value: unknown, input: GraphBuildIntentInput): GraphBuild
   if (!isObject(value) || value.kind !== "graph_build_intent" || !isObject(value.meta)) return undefined;
   if (
     value.meta.requestId !== input.requestToken ||
-    !["1.0", "1.1"].includes(String(value.meta.schemaVersion))
+    !["1.0", "1.1"].includes(String(value.meta.schemaVersion)) ||
+    value.meta.source !== "llm"
   ) return undefined;
   const ids = input.files.map((file) => file.artifactId);
   const edgeFile = input.files.find((file) => file.role === "edges") ?? input.files[0];
@@ -250,21 +228,10 @@ function parseResponse(value: unknown, input: GraphBuildIntentInput): GraphBuild
     requestToken: input.requestToken,
     ...(input.baseGraphVersionId ? { baseGraphVersionId: input.baseGraphVersionId } : {}),
     spec: parsedSpec,
-    source: value.meta.source === "llm" ? "llm" : "deterministic_fallback",
+    source: "llm",
     warnings: Array.isArray(value.meta.warnings)
       ? value.meta.warnings.filter((warning): warning is string => typeof warning === "string").slice(0, 20)
       : [],
-  };
-}
-
-export function normalizeGraphBuildIntentLocally(input: GraphBuildIntentInput, warning?: string): GraphBuildIntentResult {
-  return {
-    kind: "construction_revision",
-    requestToken: input.requestToken,
-    ...(input.baseGraphVersionId ? { baseGraphVersionId: input.baseGraphVersionId } : {}),
-    spec: fallbackSpec(input),
-    source: "deterministic_fallback",
-    warnings: warning ? [warning] : [],
   };
 }
 
@@ -287,7 +254,7 @@ export class HttpGraphBuildIntentNormalizer implements GraphBuildIntentNormalize
 
   async normalizeGraphBuildIntent(input: GraphBuildIntentInput): Promise<GraphBuildIntentResult> {
     const edgeFile = input.files.find((file) => file.role === "edges") ?? input.files[0];
-    if (!edgeFile?.columns.length) return normalizeGraphBuildIntentLocally(input);
+    if (!edgeFile?.columns.length) throw new Error("GRAPH_BUILD_INTENT_COLUMNS_REQUIRED");
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -301,8 +268,6 @@ export class HttpGraphBuildIntentNormalizer implements GraphBuildIntentNormalize
       const parsed = parseResponse(await response.json(), input);
       if (!parsed) throw new Error("INVALID_GRAPH_BUILD_INTENT_RESPONSE");
       return parsed;
-    } catch {
-      return normalizeGraphBuildIntentLocally(input, "构图意图服务不可用或返回越界字段，已采用本地确定性建议。");
     } finally {
       window.clearTimeout(timeout);
     }

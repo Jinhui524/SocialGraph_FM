@@ -327,52 +327,6 @@ def _merge_view_commands(model_view: ViewCommand | None, baseline: ViewCommand) 
     )
 
 
-def _fallback(
-    request: NormalizeIntentRequest,
-    *,
-    request_id: str,
-    warning: str,
-) -> IntentNormalizationResponse:
-    text = request.text
-    lowered = text.casefold()
-    matched = _match_task(text)
-    meta = IntentMeta(source="deterministic_fallback", requestId=request_id, warnings=[warning])
-
-    if (
-        not matched
-        and not any(hint in lowered for hint in ANALYSIS_HINTS)
-        and any(hint in lowered for hint in CHAT_HINTS)
-    ):
-        return ChatIntentResponse(
-            reply="你好，我可以把研究问题规范为图分析任务；上传关系数据后，可继续进行概览、中心性、桥接节点和社区分析。",
-            meta=meta,
-        )
-
-    task, normalized_text = matched or (
-        "overview",
-        "生成图谱概览；当前描述未匹配到更具体的分析任务",
-    )
-    view = _extract_view_command(text, task)
-    if view and (view.mode in {"path", "local"} or view.edge_type_terms) and not matched:
-        normalized_text = _normalized_text_for_view(view)
-    time_range = _extract_time_range(text)
-    filters: dict[str, str | int | float | bool] = {}
-    if time_range and time_range.start:
-        filters["startYear"] = time_range.start
-    if time_range and time_range.end:
-        filters["endYear"] = time_range.end
-    return AnalysisIntentResponse(
-        normalizedText=normalized_text,
-        task=task,
-        targets=_unique(_extract_targets(text) + (view.focus_terms if view else []))[:20],
-        confidence=0.92 if matched else 0.55,
-        timeRange=time_range,
-        filters=filters,
-        view=view,
-        meta=meta,
-    )
-
-
 def _safe_targets(targets: list[str], raw_text: str) -> tuple[list[str], bool]:
     lowered = raw_text.casefold()
     accepted: list[str] = []
@@ -486,7 +440,7 @@ class IntentNormalizerService:
     ) -> IntentNormalizationResponse:
         effective_request_id = request_id or str(uuid4())
         if self.provider is None:
-            return _fallback(request, request_id=effective_request_id, warning="LLM_NOT_CONFIGURED")
+            raise ProviderFailure("LLM_NOT_CONFIGURED", "LLM configuration is required")
 
         matched_task = _match_task(request.text)
         deterministic_view = (
@@ -520,13 +474,17 @@ class IntentNormalizerService:
                     user_prompt + "\n\n" + REPAIR_PROMPT,
                 )
                 output = MODEL_OUTPUT_ADAPTER.validate_python(repaired_payload)
-        except ProviderFailure as exc:
-            return _fallback(request, request_id=effective_request_id, warning=exc.code)
-        except ValidationError:
-            return _fallback(request, request_id=effective_request_id, warning="LLM_INVALID_RESPONSE")
-        except Exception:  # noqa: BLE001 - provider adapters are an external trust boundary
+        except ProviderFailure:
+            raise
+        except ValidationError as error:
+            raise ProviderFailure(
+                "LLM_INVALID_RESPONSE", "LLM intent output remained invalid after repair"
+            ) from error
+        except Exception as error:  # noqa: BLE001 - provider adapters are an external trust boundary
             # Do not expose provider details or user content in responses/logs.
-            return _fallback(request, request_id=effective_request_id, warning="LLM_UNAVAILABLE")
+            raise ProviderFailure(
+                "LLM_UPSTREAM_ERROR", "LLM intent normalization failed", retryable=True
+            ) from error
 
         warnings = ["LLM_OUTPUT_REPAIRED"] if repaired else []
         meta = IntentMeta(
@@ -606,13 +564,7 @@ class IntentNormalizerService:
         normalized_text = output.normalized_text.strip()
         confidence = output.confidence
         if confidence < 0.5:
-            task = "overview"
-            if deterministic_view is not None:
-                normalized_text = _normalized_text_for_view(deterministic_view)
-            else:
-                normalized_text = "生成图谱概览；模型对原始需求的理解置信度较低"
-                view = None
-            warnings.append("LOW_CONFIDENCE_DEFAULTED_TO_OVERVIEW")
+            warnings.append("LOW_CONFIDENCE_REQUIRES_REVIEW")
 
         # Recreate meta so its warning list cannot diverge after sanitization.
         meta = IntentMeta(

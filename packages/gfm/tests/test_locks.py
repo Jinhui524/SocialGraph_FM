@@ -14,9 +14,6 @@ def test_constraint_files_match_verifiable_lock_manifest():
     assert report["hashCoverageVerified"] is True
     assert report["verificationScope"] == "checked_in_lock_integrity_and_hash_coverage"
     assert set(report["profiles"]) == {
-        "windows-cu130",
-        "windows-cu130-gfm",
-        "linux-cu130",
         "cpu-ci",
         "windows-cpu",
     }
@@ -24,43 +21,22 @@ def test_constraint_files_match_verifiable_lock_manifest():
     assert all(profile["requirementCount"] > 0 for profile in report["profiles"].values())
     assert all(profile["unhashedRequirements"] == [] for profile in report["profiles"].values())
     assert all(profile["invalidHashTokens"] == [] for profile in report["profiles"].values())
-    assert report["profiles"]["windows-cu130"]["optionalExtensionsUnavailable"] == [
-        "torch-scatter", "torch-sparse"
-    ]
     assert report["profiles"]["windows-cpu"]["optionalExtensionsUnavailable"] == [
         "torch-scatter", "torch-sparse"
     ]
 
 
-def test_windows_gfm_text_lock_is_hash_bound_wheel_only_and_pickle_free():
+def test_runtime_lock_manifest_has_no_public_cuda_or_text_profile():
     project = Path(__file__).resolve().parents[1]
     manifest = json.loads(
         (project / "locks" / "runtime-lock-manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["policy"]["sourceBuildsAllowed"] is False
 
-    profile = manifest["profiles"]["windows-cu130-gfm"]
-    constraints = project / profile["constraints"]
-    lock = project / profile["requirementsLock"]
-    assert file_sha256(constraints) == profile["constraintsSha256"]
-    assert file_sha256(lock) == profile["requirementsLockSha256"]
-    assert profile["purpose"] == "SocialGraph-FM Core frozen BGE-M3 embedding"
-
-    constraint_text = constraints.read_text(encoding="utf-8")
-    lock_text = lock.read_text(encoding="utf-8")
-    assert "FlagEmbedding==1.4.0" in constraint_text
-    assert "transformers==5.14.1" in constraint_text
-    generation_header = lock_text.splitlines()[1]
-    assert "--generate-hashes" in generation_header
-    assert "--no-build" in generation_header
-    effective_lines = tuple(
-        line.strip().casefold()
-        for text in (constraint_text, lock_text)
-        for line in text.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    )
-    for forbidden in ("py-tgb", "clint"):
-        assert not any(line.startswith(f"{forbidden}==") for line in effective_lines)
+    assert manifest["schemaVersion"] == "gfm.runtime-lock-manifest/2.0"
+    assert manifest["policy"]["supportedDevices"] == ["cpu"]
+    assert set(manifest["profiles"]) == {"windows-cpu", "cpu-ci"}
+    assert "cuda" not in json.dumps(manifest).casefold()
 
 
 def test_wheel_resources_include_gfm_lock_once_and_constraints_as_one_tree():
@@ -69,14 +45,18 @@ def test_wheel_resources_include_gfm_lock_once_and_constraints_as_one_tree():
     force_include = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
 
     assert force_include["constraints"] == "socialgraph_gfm/resources/constraints"
-    assert force_include["locks/windows-cu130-gfm.requirements.txt"] == (
-        "socialgraph_gfm/resources/locks/windows-cu130-gfm.requirements.txt"
-    )
+    assert "locks/windows-cu130-gfm.requirements.txt" not in force_include
     assert force_include["install-profiles.json"] == (
         "socialgraph_gfm/resources/install-profiles.json"
     )
     assert force_include["locks/install-lock-manifest.json"] == (
         "socialgraph_gfm/resources/install-lock-manifest.json"
+    )
+    assert force_include["locks/install-windows-x86_64-cpu-pt28.requirements.txt"] == (
+        "socialgraph_gfm/resources/locks/install-windows-x86_64-cpu-pt28.requirements.txt"
+    )
+    assert force_include["locks/install-linux-x86_64-cpu-pt28.requirements.txt"] == (
+        "socialgraph_gfm/resources/locks/install-linux-x86_64-cpu-pt28.requirements.txt"
     )
     assert force_include["configs/ogbl-collab-baseline.json"] == (
         "socialgraph_gfm/resources/configs/ogbl-collab-baseline.json"
@@ -121,24 +101,18 @@ def test_wheel_resources_include_gfm_lock_once_and_constraints_as_one_tree():
         "pydantic==2.13.4",
     ]
     assert optional_dependencies["cpu"] == [
-        "ogb==1.3.6",
         "pyg-lib==0.6.0",
         "torch==2.8.0",
         "torch-geometric==2.8.0.post1",
     ]
-    assert optional_dependencies["cu130"] == [
+    assert optional_dependencies["research"] == [
         "ogb==1.3.6",
-        "pyg-lib==0.7.0",
-        "torch==2.12.0",
-        "torch-geometric==2.8.0.post1",
-        "torch-scatter==2.1.2; platform_system == 'Linux'",
-        "torch-sparse==0.6.18; platform_system == 'Linux'",
-    ]
-    assert optional_dependencies["text"] == [
+        "pandas>=2.2,<4",
+        "scikit-learn>=1.5,<2",
+        "scipy>=1.14,<2",
         "FlagEmbedding==1.4.0",
         "transformers==5.14.1",
     ]
-    assert optional_dependencies["gfm-text"] == optional_dependencies["text"]
     assert optional_dependencies["test"] == optional_dependencies["dev"]
 
 

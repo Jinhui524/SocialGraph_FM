@@ -32,7 +32,6 @@ def unconfigured_settings(isolated_dataset_store: Path) -> Settings:
         llm_api_base=None,
         llm_api_key=None,
         llm_model=None,
-        llm_api_mode="chat_completions",
         allowed_origins="http://localhost:5173",
         dataset_storage_root=str(isolated_dataset_store),
         gfm_infrastructure_ready=False,

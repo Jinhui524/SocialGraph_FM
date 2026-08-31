@@ -196,7 +196,7 @@ import {
 import { ORDINARY_PRESENTATION_COPY } from "../app-shell/presentationCopy";
 import {
   WelcomeAtlas,
-  researchPromptDispatchRequest,
+  researchPromptSkillRequest,
   researchPromptForText,
   researchPrompts,
   welcomePromptAction,
@@ -210,7 +210,6 @@ import {
 } from "../governance/overlayController";
 import {
   buildAnalysisResultMarkdown,
-  deterministicGovernanceCompletionReport,
   ensureHumanReviewGuidance,
   resultDescription,
 } from "../governance/reports";
@@ -1160,7 +1159,7 @@ export function SocialGraphWorkspaceView({ model }: { readonly model: Record<str
             <div className="panel-section__title"><strong>服务状态</strong></div>
             <div className="diagnostic-grid">
               <div className="diagnostic-row"><strong>LLM 配置</strong><span>{intentServiceStatus.label}</span></div>
-              <div className="diagnostic-row"><strong>本次调用</strong><span className={`diagnostic-status is-${llmDiagnostic.state}`}>{llmDiagnostic.state === "success" ? "LLM 调用成功" : llmDiagnostic.state === "fallback" ? "规则降级" : llmDiagnostic.state === "running" ? "测试中" : llmDiagnostic.state === "error" ? "调用失败" : "尚未测试"}</span></div>
+              <div className="diagnostic-row"><strong>本次调用</strong><span className={`diagnostic-status is-${llmDiagnostic.state}`}>{llmDiagnostic.state === "success" ? "LLM 调用成功" : llmDiagnostic.state === "running" ? "测试中" : llmDiagnostic.state === "error" ? "调用失败" : "尚未测试"}</span></div>
               <div className="diagnostic-row"><strong>SocialGraph-FM Governance</strong><span>{governanceStatusDescription}</span></div>
             </div>
           </section>

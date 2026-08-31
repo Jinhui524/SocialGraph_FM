@@ -11,10 +11,8 @@ const apiProxy = {
   },
 };
 
-export default defineConfig(({ mode }) => ({
-  define: mode === "e2e"
-    ? { "import.meta.env.VITE_SOCIALGRAPH_API_BASE_URL": JSON.stringify("") }
-    : undefined,
+export default defineConfig(() => ({
+  define: { "import.meta.env.VITE_SOCIALGRAPH_API_BASE_URL": JSON.stringify("") },
   build: {
     outDir: "dist/client",
     chunkSizeWarningLimit: 1900,

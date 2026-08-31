@@ -5,7 +5,6 @@ import { buildDemoGraphVersion } from "./graphImport";
 import {
   buildGraphContextSummary,
   HttpIntentNormalizer,
-  normalizeIntentLocally,
 } from "./intentNormalizer";
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -76,19 +75,15 @@ describe("HttpIntentNormalizer privacy boundary", () => {
     expect(serialized).not.toContain("绝密成员关系.csv");
   });
 
-  it("uses deterministic normalization when the API cannot be reached", async () => {
+  it("fails when the required model API cannot be reached", async () => {
     const fetcher = vi.fn(async () => { throw new TypeError("network unavailable"); });
     const normalizer = new HttpIntentNormalizer({
       baseUrl: "http://api.test",
       fetcher: fetcher as unknown as typeof fetch,
     });
 
-    const result = await normalizer.normalizeIntent({ text: "识别关键桥接节点" });
-
-    expect(result.kind).toBe("analysis_request");
-    expect(result.meta.source).toBe("deterministic_fallback");
-    expect(result.meta.warnings[0]).toContain("本地规则");
-    if (result.kind === "analysis_request") expect(result.task).toBe("bridge_detection");
+    await expect(normalizer.normalizeIntent({ text: "识别关键桥接节点" }))
+      .rejects.toThrow("network unavailable");
   });
 
   it("removes targets that are not grounded in the original text", async () => {
@@ -150,7 +145,7 @@ describe("HttpIntentNormalizer privacy boundary", () => {
     }
   });
 
-  it("does not re-create ignored legacy layout fields through local fallback", async () => {
+  it("does not synthesize ignored legacy layout fields", async () => {
     const fetcher = vi.fn(async () => jsonResponse({
       kind: "analysis_request",
       normalizedText: "查看张三的两跳邻域",
@@ -178,19 +173,12 @@ describe("HttpIntentNormalizer privacy boundary", () => {
 });
 
 describe("intent behavior", () => {
-  it("keeps ordinary conversation out of the graph analysis executor", () => {
-    const result = normalizeIntentLocally({ text: "你好" });
-
-    expect(result.kind).toBe("chat");
-    if (result.kind === "chat") expect(result.reply).toContain("CSV / JSON");
-  });
-
   it("reports configured LLM capability", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/health")) return jsonResponse({ status: "ok", service: "socialgraph-fm-api", version: "0.1.0" });
       return jsonResponse({
-        intentNormalization: { configured: true, mode: "llm_with_fallback", model: "example-model" },
+        intentNormalization: { configured: true, mode: "llm_required", connectionStatus: "configured_unverified", model: "example-model" },
       });
     });
     const normalizer = new HttpIntentNormalizer({
@@ -205,25 +193,11 @@ describe("intent behavior", () => {
     });
   });
 
-  it("creates deterministic local and path view commands during fallback", () => {
-    const local = normalizeIntentLocally({ text: "查看张三的两跳邻居，只看合作关系" });
-    expect(local.kind).toBe("analysis_request");
-    if (local.kind === "analysis_request") {
-      expect(local.targets).toContain("张三");
-      expect(local.view).toMatchObject({
-        mode: "local",
-        depth: 2,
-        focusTerms: ["张三"],
-        edgeTypeTerms: ["合作"],
-      });
-      expect(local.meta.schemaVersion).toBe("1.1");
-    }
-
-    const path = normalizeIntentLocally({ text: "显示张三到李四的最短路径" });
-    expect(path.kind).toBe("analysis_request");
-    if (path.kind === "analysis_request") {
-      expect(path.targets).toEqual(["张三", "李四"]);
-      expect(path.view).toMatchObject({ mode: "path", focusTerms: ["张三", "李四"] });
-    }
+  it("reports missing configuration as an error without a local fallback", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/health")
+      ? jsonResponse({ status: "ok" })
+      : jsonResponse({ intentNormalization: { configured: false, mode: "llm_required", connectionStatus: "not_configured" } }));
+    const normalizer = new HttpIntentNormalizer({ baseUrl: "http://api.test", fetcher: fetcher as unknown as typeof fetch });
+    await expect(normalizer.checkStatus()).resolves.toEqual({ state: "error", label: "LLM 未配置或验证失败" });
   });
 });

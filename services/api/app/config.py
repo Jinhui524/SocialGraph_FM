@@ -15,10 +15,6 @@ from .gfm_core_schemas import MAX_INTERNAL_REQUEST_BYTES
 
 _ENCODED_CONTROL = re.compile(r"%0[0ad]", re.IGNORECASE)
 _PERCENT_ESCAPE = re.compile(r"%([0-9A-Fa-f]{2})")
-_ANTHROPIC_VERSION = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-LLM_API_MODES = ("chat_completions", "responses", "anthropic_messages")
-LLM_AUTH_SCHEMES = ("bearer", "x-api-key")
-DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 MAX_LLM_API_KEY_CHARACTERS = 8_192
 
 
@@ -55,7 +51,7 @@ def _normalized_llm_host(value: str) -> tuple[str, bool]:
     return address.compressed.lower(), address.is_loopback
 
 
-def validate_llm_api_base(value: str, *, allow_insecure_loopback: bool) -> str:
+def validate_llm_api_base(value: str) -> str:
     """Validate an OpenAI-compatible base URL without performing DNS resolution."""
 
     normalized = value.rstrip("/")
@@ -82,31 +78,23 @@ def validate_llm_api_base(value: str, *, allow_insecure_loopback: bool) -> str:
     if parts.username is not None or parts.password is not None:
         raise ValueError("llm_api_base cannot contain embedded credentials")
     host, loopback = _normalized_llm_host(parts.hostname)
-    if parts.scheme == "http":
-        if not allow_insecure_loopback or not loopback:
-            raise ValueError(
-                "remote llm_api_base URLs must use HTTPS; HTTP requires an explicitly "
-                "enabled loopback endpoint"
-            )
+    if parts.scheme == "http" and not loopback:
+        raise ValueError("remote llm_api_base URLs must use HTTPS")
     hostname = f"[{host}]" if ":" in host else host
     port = f":{parsed_port}" if parsed_port is not None else ""
     return f"{parts.scheme}://{hostname}{port}{parts.path.rstrip('/')}"
 
 
-def derive_llm_endpoint(api_base: str, api_mode: str) -> str:
-    if api_mode not in LLM_API_MODES:
-        raise ValueError(f"Unsupported LLM API mode: {api_mode}")
+def derive_llm_endpoint(api_base: str) -> str:
+    """Derive the single supported OpenAI Chat Completions endpoint."""
+
     base = api_base.rstrip("/")
-    for suffix in ("/chat/completions", "/responses", "/messages"):
-        if base.endswith(suffix):
-            base = base[: -len(suffix)]
-            break
-    endpoint = {
-        "chat_completions": "/chat/completions",
-        "responses": "/responses",
-        "anthropic_messages": "/messages",
-    }[api_mode]
-    return f"{base}{endpoint}"
+    if base.endswith("/chat/completions"):
+        return base
+    parts = urlsplit(base)
+    if not parts.path or parts.path == "/":
+        return f"{base}/v1/chat/completions"
+    return f"{base}/chat/completions"
 
 
 class Settings(BaseSettings):
@@ -120,17 +108,7 @@ class Settings(BaseSettings):
 
     llm_api_base: str | None = None
     llm_api_key: SecretStr | None = None
-    llm_model: str | None = None
-    llm_api_mode: Literal[
-        "responses", "chat_completions", "anthropic_messages"
-    ] = "chat_completions"
-    llm_auth_scheme: Literal["bearer", "x-api-key"] | None = None
-    llm_anthropic_version: str | None = None
-    llm_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
-    llm_allow_insecure_loopback: bool = False
-    llm_verification_status: Literal[
-        "configured_unverified", "call_succeeded", "fallback"
-    ] = "configured_unverified"
+    llm_model: str | None = Field(default=None, min_length=1, max_length=200)
     dataset_upload_max_bytes: int = Field(default=20 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
     dataset_archive_max_bytes: int = Field(
         default=50 * 1024 * 1024,
@@ -206,7 +184,7 @@ class Settings(BaseSettings):
         le=20 * 1024 * 1024 * 1024,
     )
     trusted_conversion_memory_mb: int = Field(default=4096, ge=256, le=65_536)
-    allowed_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
+    allowed_origins: str = ""
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @field_validator(
@@ -228,6 +206,15 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("llm_model")
+    @classmethod
+    def validate_llm_model(cls, value: str | None) -> str | None:
+        if value is not None and any(
+            ord(character) < 32 or ord(character) == 127 for character in value
+        ):
+            raise ValueError("llm_model must be single-line text")
+        return value
 
     @field_validator("llm_api_base", mode="before")
     @classmethod
@@ -252,36 +239,6 @@ class Settings(BaseSettings):
                 )
         return value
 
-    @field_validator("llm_api_mode", mode="before")
-    @classmethod
-    def empty_mode_to_default(cls, value: object) -> object:
-        return "chat_completions" if isinstance(value, str) and not value.strip() else value
-
-    @field_validator("llm_auth_scheme", mode="before")
-    @classmethod
-    def empty_auth_scheme_to_none(cls, value: object) -> object:
-        return None if isinstance(value, str) and not value.strip() else value
-
-    @field_validator("llm_anthropic_version", mode="before")
-    @classmethod
-    def empty_anthropic_version_to_none(cls, value: object) -> object:
-        return None if isinstance(value, str) and not value.strip() else value
-
-    @field_validator("llm_timeout_seconds", mode="before")
-    @classmethod
-    def empty_timeout_to_default(cls, value: object) -> object:
-        return 15.0 if isinstance(value, str) and not value.strip() else value
-
-    @field_validator("llm_allow_insecure_loopback", mode="before")
-    @classmethod
-    def empty_insecure_flag_to_default(cls, value: object) -> object:
-        return False if isinstance(value, str) and not value.strip() else value
-
-    @field_validator("llm_verification_status", mode="before")
-    @classmethod
-    def empty_verification_status_to_default(cls, value: object) -> object:
-        return "configured_unverified" if isinstance(value, str) and not value.strip() else value
-
     @model_validator(mode="after")
     def validate_inspection_cache_limits(self) -> Settings:
         key = self.llm_api_key.get_secret_value().strip() if self.llm_api_key else ""
@@ -291,26 +248,7 @@ class Settings(BaseSettings):
                 "llm_api_base, llm_api_key, and llm_model must be configured together"
             )
         if self.llm_api_base:
-            self.llm_api_base = validate_llm_api_base(
-                self.llm_api_base,
-                allow_insecure_loopback=self.llm_allow_insecure_loopback,
-            )
-        if self.llm_auth_scheme is None:
-            self.llm_auth_scheme = (
-                "x-api-key"
-                if self.llm_api_mode == "anthropic_messages"
-                else "bearer"
-            )
-        if self.llm_api_mode == "anthropic_messages":
-            self.llm_anthropic_version = (
-                self.llm_anthropic_version or DEFAULT_ANTHROPIC_VERSION
-            )
-            if not _ANTHROPIC_VERSION.fullmatch(self.llm_anthropic_version):
-                raise ValueError("llm_anthropic_version must use YYYY-MM-DD")
-        elif self.llm_anthropic_version is not None:
-            raise ValueError(
-                "llm_anthropic_version is valid only with anthropic_messages"
-            )
+            self.llm_api_base = validate_llm_api_base(self.llm_api_base)
         if self.inspection_cache_max_project_bytes > self.inspection_cache_max_bytes:
             raise ValueError(
                 "inspection_cache_max_project_bytes 不能超过 inspection_cache_max_bytes"
@@ -352,9 +290,6 @@ def get_settings() -> Settings:
 
 
 __all__ = [
-    "DEFAULT_ANTHROPIC_VERSION",
-    "LLM_API_MODES",
-    "LLM_AUTH_SCHEMES",
     "Settings",
     "derive_llm_endpoint",
     "get_settings",

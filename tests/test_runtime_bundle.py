@@ -28,7 +28,13 @@ def test_runtime_bundle_inventory_is_exact_and_hash_bound() -> None:
     assert manifest["schemaVersion"] == "socialgraph-fm.runtime-bundle/1.0"
     assets = manifest["assets"]
     assert isinstance(assets, list)
-    assert len(assets) == manifest["fileCount"] == 246
+    assert len(assets) == manifest["fileCount"]
+    assert manifest["contentRoots"] == [
+        "bundles/models/socialgraph-global",
+        "bundles/governance",
+        "bundles/web",
+        "examples/governance",
+    ]
     paths = [entry["path"] for entry in assets]
     assert paths == sorted(paths)
     assert len(paths) == len(set(paths))
@@ -58,6 +64,10 @@ def test_runtime_bundle_inventory_is_exact_and_hash_bound() -> None:
         if path.is_file()
     )
     assert actual == paths
+    assert {entry["path"] for entry in assets if entry["role"] == "web"} == {
+        "bundles/web/client.zip",
+        "bundles/web/manifest.json",
+    }
 
 
 def test_model_bundle_is_the_deployable_export_plus_russia_serving_corpus_only() -> None:

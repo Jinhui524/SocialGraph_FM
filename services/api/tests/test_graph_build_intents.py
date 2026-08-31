@@ -42,17 +42,56 @@ def profiles() -> list[dict[str, object]]:
     ]
 
 
+async def _normalize_with_llm(
+    payload: dict[str, object],
+    **output_updates: object,
+) -> httpx.Response:
+    output: dict[str, object] = {
+        "sourceColumn": None,
+        "targetColumn": None,
+        "edgeTypeColumn": None,
+        "weightColumn": None,
+        "timestampColumn": None,
+        "nodeIdColumn": None,
+        "nodeLabelColumn": None,
+        "nodeTypeColumn": None,
+        "directedness": "unspecified",
+        "confidence": 0.9,
+        **output_updates,
+    }
+    app = create_app(Settings(), provider=SequenceProvider([output]))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        return await client.post(
+            "/api/v1/graph-build-intents/normalize", json=payload
+        )
+
+
 @pytest.mark.anyio
-async def test_deterministic_graph_build_mapping_is_bounded(
+async def test_graph_build_normalization_requires_llm(
     api_client: httpx.AsyncClient,
 ) -> None:
     response = await api_client.post(
         "/api/v1/graph-build-intents/normalize",
-        headers={"X-Request-ID": "build-1"},
-        json={
+        json={"description": "构建图", "columnProfiles": profiles()},
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "LLM_NOT_CONFIGURED"}}
+
+
+@pytest.mark.anyio
+async def test_grounded_graph_build_mapping_is_bounded() -> None:
+    response = await _normalize_with_llm(
+        {
             "description": "这是用户之间的有向消息关系，from_user 指向 to_user。",
             "columnProfiles": profiles(),
         },
+        sourceColumn="from_user",
+        targetColumn="to_user",
+        weightColumn="weight",
+        timestampColumn="event_time",
+        directedness="directed",
     )
 
     assert response.status_code == 200
@@ -69,10 +108,10 @@ async def test_deterministic_graph_build_mapping_is_bounded(
     assert body["requiresMapping"] is False
     assert body["meta"] == {
         "schemaVersion": "1.0",
-        "source": "deterministic_fallback",
-        "requestId": "build-1",
-        "model": None,
-        "warnings": ["LLM_NOT_CONFIGURED"],
+        "source": "llm",
+        "requestId": body["meta"]["requestId"],
+        "model": "test-model",
+        "warnings": [],
     }
 
 
@@ -142,12 +181,9 @@ async def test_llm_columns_are_grounded_and_prompt_has_no_rows() -> None:
 
 
 @pytest.mark.anyio
-async def test_ambiguous_columns_require_manual_mapping(
-    api_client: httpx.AsyncClient,
-) -> None:
-    response = await api_client.post(
-        "/api/v1/graph-build-intents/normalize",
-        json={
+async def test_ambiguous_columns_require_manual_mapping() -> None:
+    response = await _normalize_with_llm(
+        {
             "description": "这是成员关系数据",
             "columnProfiles": [
                 {
@@ -166,6 +202,7 @@ async def test_ambiguous_columns_require_manual_mapping(
                 },
             ],
         },
+        confidence=0.2,
     )
     assert response.status_code == 200
     body = response.json()
@@ -305,12 +342,13 @@ async def test_model_cannot_invent_or_flip_directedness() -> None:
     ],
 )
 async def test_conflicting_or_negated_direction_requires_safe_unspecified(
-    api_client: httpx.AsyncClient,
     description: str,
 ) -> None:
-    response = await api_client.post(
-        "/api/v1/graph-build-intents/normalize",
-        json={"description": description, "columnProfiles": profiles()},
+    response = await _normalize_with_llm(
+        {"description": description, "columnProfiles": profiles()},
+        sourceColumn="from_user",
+        targetColumn="to_user",
+        directedness="directed",
     )
 
     assert response.status_code == 200
@@ -320,10 +358,9 @@ async def test_conflicting_or_negated_direction_requires_safe_unspecified(
 
 
 @pytest.mark.anyio
-async def test_vector_word_is_not_direction_evidence(api_client: httpx.AsyncClient) -> None:
-    response = await api_client.post(
-        "/api/v1/graph-build-intents/normalize",
-        json={
+async def test_vector_word_is_not_direction_evidence() -> None:
+    response = await _normalize_with_llm(
+        {
             "description": "所有向量特征都已归一化",
             "columnProfiles": profiles(),
         },
@@ -334,13 +371,9 @@ async def test_vector_word_is_not_direction_evidence(api_client: httpx.AsyncClie
 
 
 @pytest.mark.anyio
-async def test_v11_dual_table_profiles_return_grounded_node_mapping(
-    api_client: httpx.AsyncClient,
-) -> None:
-    response = await api_client.post(
-        "/api/v1/graph-build-intents/normalize",
-        headers={"X-Request-ID": "dual-build-1"},
-        json={
+async def test_v11_dual_table_profiles_return_grounded_node_mapping() -> None:
+    response = await _normalize_with_llm(
+        {
             "description": "节点表包含实体类型，关系是无向合作。",
             "files": [
                 {
@@ -354,6 +387,12 @@ async def test_v11_dual_table_profiles_return_grounded_node_mapping(
                 {"role": "edges", "columnProfiles": profiles()},
             ],
         },
+        sourceColumn="from_user",
+        targetColumn="to_user",
+        nodeIdColumn="node_id",
+        nodeLabelColumn="display_name",
+        nodeTypeColumn="node_type",
+        directedness="undirected",
     )
 
     assert response.status_code == 200
@@ -384,9 +423,8 @@ async def test_v11_rejects_cross_table_payloads_and_non_unique_node_id(
     )
     assert duplicate_roles.status_code == 422
 
-    non_unique_id = await api_client.post(
-        "/api/v1/graph-build-intents/normalize",
-        json={
+    non_unique_id = await _normalize_with_llm(
+        {
             "description": "构建图",
             "files": [
                 {
@@ -398,6 +436,9 @@ async def test_v11_rejects_cross_table_payloads_and_non_unique_node_id(
                 {"role": "edges", "columnProfiles": profiles()},
             ],
         },
+        sourceColumn="from_user",
+        targetColumn="to_user",
+        nodeIdColumn="node_id",
     )
     assert non_unique_id.status_code == 200
     body = non_unique_id.json()

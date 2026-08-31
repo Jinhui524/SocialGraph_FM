@@ -1,105 +1,69 @@
-# SocialGraph-FM Skills Reference
+# SocialGraph-FM Skills 索引
 
-[简体中文](README.zh-CN.md) · [Project README](../README.md)
+本目录把界面中的大模型研判能力与底层治理操作分成两个独立 namespace：
 
-This directory contains two deliberately separate Skill contracts:
+- `socialgraph-fm.product-skills.assistant`：6 个只读、必须调用 LLM 的研判 Skills。
+- `socialgraph-fm.product-skills.governance`：8 个受合同约束的图治理 Skills。
 
-- Governance: eight public product Skills in
-  `socialgraph-fm.product-skills.governance`.
-- Core: four experimental research Skills in
-  `socialgraph-fm.product-skills.core`.
+Assistant Skills 只能编排允许的只读 Governance Skills，不得执行模型、写入案件或绕过确认。机器合同分别以 [`assistant/catalog.json`](assistant/catalog.json) 和 [`governance/catalog.json`](governance/catalog.json) 为准。
 
-The catalogs are contracts for the local SocialGraph-FM runtime. They are not generic
-agent configuration files, and the Core names do not extend or alias the Governance
-catalog.
+## Assistant Skills 与界面对应
 
-## Governance catalog
+| Skill | 用户看到的位置 | 底层 Governance Skills | 失败行为 |
+| --- | --- | --- | --- |
+| `answer_governance_question` | 对话研究、研判助手自由追问 | 按问题选择只读 Skills | LLM 或证据调用失败时返回 502/503，不生成替代回答 |
+| `summarize_node_evidence` | 证据档案 → 智能证据研判 | `inspect_graph`、`get_evidence_subgraph`、`rank_coordination_relations` | 缺少运行或账号上下文时拒绝执行 |
+| `generate_global_situation_report` | 研判助手 → 全局态势报告；分析完成报告 | `inspect_graph`、`discover_coordination_groups`、两类关系排序 | 缺少成功运行时拒绝执行 |
+| `generate_account_evidence_report` | 研判助手 → 当前账号证据报告 | `inspect_graph`、`get_evidence_subgraph`、两类关系排序 | 未选择账号时拒绝执行 |
+| `generate_coordination_report` | 研判助手 → 群组与关系研判报告 | `inspect_graph`、`discover_coordination_groups`、两类关系排序 | 缺少成功运行时拒绝执行 |
+| `generate_case_review_draft` | 研判助手 → 人工研判草稿 | 当前案件、证据、群组、关系 | 只返回预览；缺少案件或案件版本过期时拒绝执行 |
 
-[governance/catalog.json](governance/catalog.json) is the sole machine-readable source
-of names, order, permissions, confirmation actions, parameter-Schema locations, and
-internal commands. The following rows preserve its exact order.
-
-| Skill | Purpose | Access and confirmation | Parameter Schema | Failure boundary |
-| --- | --- | --- | --- | --- |
-| `inspect_graph` | Return bounded graph counts and modality coverage, optionally for a canonical node scope or existing run. | Read-only; no confirmation. | [`inspect_graph`](governance/schemas/public/parameters/inspect_graph.schema.json) | Rejects extra fields, an invalid run identity, more than 100 scope nodes, or an unavailable graph; never returns a model prediction. |
-| `run_governance_analysis` | Prepare a Global governance run and its bounded candidate limit. | State-changing; execution requires a short-lived explicit confirmation. | [`run_governance_analysis`](governance/schemas/public/parameters/run_governance_analysis.schema.json) | The first call creates no run. It fails closed on non-Global protocol, invalid `topK`, graph/model drift, invalid or expired confirmation, or model failure. |
-| `get_evidence_subgraph` | Trace a bounded, hash-bound evidence subgraph for one node in a completed run. | Read-only; no confirmation. | [`get_evidence_subgraph`](governance/schemas/public/parameters/get_evidence_subgraph.schema.json) | Rejects an unknown run/node or identity mismatch; evidence remains a bounded projection and not proof of causality. |
-| `discover_coordination_groups` | Page through deterministic coordination-group summaries from a completed run. | Read-only; no confirmation. | [`discover_coordination_groups`](governance/schemas/public/parameters/discover_coordination_groups.schema.json) | Rejects unknown runs and pagination outside the Schema bounds; does not create or modify cases. |
-| `rank_coordination_relations` | Page through factual-relation rankings or potential-clue rankings. | Read-only; no confirmation. | [`rank_coordination_relations`](governance/schemas/public/parameters/rank_coordination_relations.schema.json) | Rejects unknown runs, invalid pagination/modalities, and modalities on `potential` clues; potential relations remain clues, not graph facts. |
-| `retrieve_similar_cases` | Retrieve successfully indexed, concluded review cases for one case or bounded run targets. | Read-only; no confirmation. | [`retrieve_similar_cases`](governance/schemas/public/parameters/retrieve_similar_cases.schema.json) | Requires exactly `caseId` or `runId` plus `kindEntries`; rejects unavailable/unindexed cases and cross-model or source-identity drift. |
-| `get_model_dataset_cards` | Return the registered model, dataset, and input-contract cards. | Read-only; no confirmation. | [`get_model_dataset_cards`](governance/schemas/public/parameters/get_model_dataset_cards.schema.json) | Accepts no parameters and fails if registered cards or their bound identities cannot be validated. |
-| `draft_review_report` | Create a deterministic Markdown or JSON case-review draft for controlled saving. | State-changing; persistence requires a short-lived explicit confirmation. | [`draft_review_report`](governance/schemas/public/parameters/draft_review_report.schema.json) | The first call does not persist the draft. It rejects unknown cases, unsupported formats, changed case context, or invalid/expired confirmation. |
-
-Migration note: the private predecessor capability formerly named `run_iohunter` maps to the sole public canonical name `run_governance_analysis`; no compatibility alias is exposed.
-
-## Public Governance API
-
-The stable base is `/api/v2/gfm/governance`:
-
-| Method and path | Contract |
-| --- | --- |
-| `GET /skills` | Return the ordered catalog, resolved parameter Schemas, permissions, and canonical `catalogHash`. |
-| `POST /skills/execute` | Execute a request whose body contains the Skill name and full graph/model context. |
-| `POST /skills/{skill}/execute` | Execute the named Skill with the same strict context and parameter validation. |
-| `POST /skills/confirm` | Consume a single-use confirmation token for a previously prepared state-changing action. |
-
-The full request Schema is
-[governance/schemas/public/skill-request.schema.json](governance/schemas/public/skill-request.schema.json).
-Every request binds `artifactId`, `datasetContentHash`, `graphVersionHash`,
-`modelVersionId`, and `modelStateHash`; arbitrary extra properties are rejected. The
-catalog schema and deterministic positive/negative vectors are under
-[`governance/schemas`](governance/schemas) and
-[`governance/vectors`](governance/vectors).
-
-## Governance implementation and provenance
-
-The contract flows through four checked layers:
+统一接口：
 
 ```text
-skills/governance/catalog.json + public JSON Schemas
-  → services/api/app/governance_skill_runtime/  validation, confirmation, audit
-  → packages/gfm/src/socialgraph_gfm/governance/skill_executor.py  execution
-  → apps/web/src/generated/governanceSkillsContract.ts  generated client contract
+GET  /api/v2/gfm/governance/assistant/skills
+POST /api/v2/gfm/governance/assistant/execute
 ```
 
-Do not edit the generated Web contract by hand. Catalog/API/GFM/Web order, permissions,
-commands, Schemas, and vectors are enforced by parity tests.
+请求明确携带 Assistant Skill ID、问题、图/模型身份及受限上下文；响应包含答案、只读调用 trace、证据引用、引用哈希和审计哈希。Assistant 响应没有 `intent`、回答模式或本地 fallback 字段。
 
-`GET /skills` exposes a canonical SHA-256 `catalogHash`. Skill requests bind dataset,
-GraphVersion, and model-state hashes; isolated GFM results include a canonical
-`provenance.inputHash` and implementation version. Confirmation tickets additionally
-bind the action and request digest and are short-lived and single-use. Audit records
-store request/response hashes rather than accepting caller-supplied provenance.
+## Governance Skills
 
-All layers fail closed on an unknown Skill, malformed or oversized parameters, catalog
-drift, graph/model/source mismatch, invalid GFM result, expired or reused confirmation,
-or unavailable runtime artifact. Read-only Skills cannot write review or report state.
-An LLM may select only allowlisted read-only Skills automatically; it cannot bypass a
-confirmation gate, replace graph facts, or alter model scores.
+以下顺序与 [`governance/catalog.json`](governance/catalog.json) 完全一致。
 
-## Experimental Core catalog
+| Skill | 作用 | 只读 | 确认 | 参数 Schema | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `inspect_graph` | 返回图规模与关系模态覆盖 | 是 | 否 | [`inspect_graph.schema.json`](governance/schemas/public/parameters/inspect_graph.schema.json) | [SKILL.md](governance/inspect_graph/SKILL.md) |
+| `run_governance_analysis` | 准备 Global 治理分析 | 否 | 执行前 | [`run_governance_analysis.schema.json`](governance/schemas/public/parameters/run_governance_analysis.schema.json) | [SKILL.md](governance/run_governance_analysis/SKILL.md) |
+| `get_evidence_subgraph` | 获取账号绑定证据子图 | 是 | 否 | [`get_evidence_subgraph.schema.json`](governance/schemas/public/parameters/get_evidence_subgraph.schema.json) | [SKILL.md](governance/get_evidence_subgraph/SKILL.md) |
+| `discover_coordination_groups` | 分页读取协同群组 | 是 | 否 | [`discover_coordination_groups.schema.json`](governance/schemas/public/parameters/discover_coordination_groups.schema.json) | [SKILL.md](governance/discover_coordination_groups/SKILL.md) |
+| `rank_coordination_relations` | 分页排序事实关系或潜在线索 | 是 | 否 | [`rank_coordination_relations.schema.json`](governance/schemas/public/parameters/rank_coordination_relations.schema.json) | [SKILL.md](governance/rank_coordination_relations/SKILL.md) |
+| `retrieve_similar_cases` | 检索已成功索引的审结案例 | 是 | 否 | [`retrieve_similar_cases.schema.json`](governance/schemas/public/parameters/retrieve_similar_cases.schema.json) | [SKILL.md](governance/retrieve_similar_cases/SKILL.md) |
+| `get_model_dataset_cards` | 返回绑定的模型、数据与输入合同 | 是 | 否 | [`get_model_dataset_cards.schema.json`](governance/schemas/public/parameters/get_model_dataset_cards.schema.json) | [SKILL.md](governance/get_model_dataset_cards/SKILL.md) |
+| `draft_review_report` | 创建待保存的确定性案件草稿 | 否 | 保存前 | [`draft_review_report.schema.json`](governance/schemas/public/parameters/draft_review_report.schema.json) | [SKILL.md](governance/draft_review_report/SKILL.md) |
 
-[core/catalog.json](core/catalog.json) is the isolated Core contract and preserves this
-order. Core requests and responses use strict versioned Pydantic models implemented in
-[`packages/gfm/src/socialgraph_gfm/core/skills.py`](../packages/gfm/src/socialgraph_gfm/core/skills.py).
-They operate only on registered graph/finding/knowledge records, return data without
-persisting Governance state, and do not use the Governance confirmation routes.
+统一底层接口：
 
-| Skill | Purpose | Access and confirmation | Schema source | Failure boundary |
-| --- | --- | --- | --- | --- |
-| `generate_report` | Render a deterministic Markdown or JSON report from registered finding hashes. | Read-only registry operation; no Governance confirmation. | Request/response version IDs in [`core/catalog.json`](core/catalog.json); strict models in the Core implementation. | Rejects duplicate or unknown finding hashes and unsupported formats; output is explicitly generated without an LLM. |
-| `inspect_graph` | Count registered nodes and edges for a graph hash and optional canonical scope. | Read-only registry operation; no Governance confirmation. | Same source. | Rejects unknown graph hashes and duplicate or unknown scoped nodes; returns static facts only. |
-| `retrieve_evidence` | Search registered FTS knowledge and optional structural records. | Read-only registry operation; no Governance confirmation. | Same source. | Rejects invalid queries, limits, or structural hashes; retrieval scores are non-causal and not labels. |
-| `run_core_task` | Return registered finding hashes for one Core task, graph, and scope. | Read-only registry operation; no Governance confirmation. | Same source. | Rejects unknown graph/scope/task contracts and never manufactures findings or executes a natural-language plan. |
+```text
+GET  /api/v2/gfm/governance/skills
+POST /api/v2/gfm/governance/skills/execute
+POST /api/v2/gfm/governance/skills/{skill}/execute
+POST /api/v2/gfm/governance/skills/confirm
+```
 
-The machine status in `docs/status/readiness.json` applies only to formal experimental
-Core research/serving gates. It does not determine availability of the Governance
-catalog or complete Global-model user workflow.
+API 在 `services/api/app/governance_skill_runtime/` 校验外部合同、图/模型身份、确认票据和审计记录；GFM 在 `packages/gfm/src/socialgraph_gfm/governance/skill_executor.py` 执行内部命令。参数 Schema、Web 生成合同、API models、GFM catalog 与测试向量必须保持同名、同序和同权限。
 
-## Change discipline
+所有调用 fail closed：未知 Skill、越界参数、过期图或案件、模型身份不一致、缺少运行制品、确认票据过期/重放以及来源哈希不一致均不会降级为其他 Skill。`draft_review_report` 生成的是经确认保存的确定性案件草稿；`generate_case_review_draft` 仅生成 LLM 预览，二者不能互换。
 
-Make Governance contract changes in `governance/catalog.json` and its source Schemas,
-then regenerate checked mirrors with the repository generator and run catalog parity
-tests. A name, order, permission, confirmation action, Schema, or internal-command
-change is a public contract change. Never merge the Core and Governance namespaces or
-weaken hash/confirmation checks for compatibility.
+## 实验 Core Skills
+
+`skills/core/` 中 4 个 Core Skills 属于独立实验 namespace，不是 Governance Skills 的别名，也不进入公开治理 API。`docs/status/readiness.json` 仅记录这部分研究门禁。
+
+| Skill | 实验用途 |
+| --- | --- |
+| `generate_report` | 根据已登记 finding hashes 生成确定性 Markdown 或 JSON 报告 |
+| `inspect_graph` | 按 graph hash 和可选 scope 统计已登记节点与边 |
+| `retrieve_evidence` | 检索实验 Core 的知识和结构证据记录 |
+| `run_core_task` | 对已登记图和 scope 执行实验 Core task 合同 |
+
+Migration note: the private predecessor capability formerly named `run_iohunter` maps to the sole public canonical name `run_governance_analysis`; no compatibility alias is exposed.

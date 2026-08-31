@@ -67,9 +67,8 @@ def _run(command: list[str], *, cwd: Path, timeout: float = 10) -> str | None:
 def _dependency_manifest(source_root: Path) -> dict[str, str]:
     candidates = [
         source_root / "pyproject.toml",
-        source_root / "requirements.txt",
         source_root / "requirements-dev.txt",
-        source_root / "requirements.lock",
+        source_root / "requirements-dev.lock",
         *sorted((source_root / "constraints").glob("**/*")),
     ]
     result: dict[str, str] = {}

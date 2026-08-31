@@ -1,17 +1,19 @@
 import { SocialGraphApiError, readSocialGraphApiJson, socialGraphApiUrl } from "./apiClient";
 import { parseGovernanceOnlineRun } from "./governanceOnlineContracts";
 import {
-  GOVERNANCE_ASSISTANT_SCHEMA,
-  GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
+  ASSISTANT_PUBLIC_SKILLS,
+  ASSISTANT_SKILLS_SCHEMA,
+  ASSISTANT_SKILL_REQUEST_SCHEMA,
+  ASSISTANT_SKILL_RESULT_SCHEMA,
+  ASSISTANT_SKILL_POLICIES,
   GOVERNANCE_PUBLIC_SKILLS,
   GOVERNANCE_SKILLS_SCHEMA,
   GOVERNANCE_SKILL_POLICIES,
-  type GovernanceAssistantTurnResponse,
-  type GovernanceAssistantDispatchContext,
-  type GovernanceAssistantDispatchIntent,
-  type GovernanceAssistantDispatchResponse,
+  type AssistantSkillCatalog,
+  type AssistantSkillDescriptor,
+  type AssistantSkillName,
+  type AssistantSkillResult,
   type GovernanceAssistantSkillTrace,
-  type GovernanceAnswerMode,
   type GovernanceConfirmationTicket,
   type GovernanceConfirmationAction,
   type GovernanceKnowledgeItem,
@@ -32,6 +34,7 @@ import {
 type Fetcher = typeof fetch;
 const HASH = /^[0-9a-f]{64}$/u;
 const SKILL_SET = new Set<string>(GOVERNANCE_PUBLIC_SKILLS);
+const ASSISTANT_SKILL_SET = new Set<string>(ASSISTANT_PUBLIC_SKILLS);
 
 function fail(): never {
   throw new SocialGraphApiError("GFM_GOVERNANCE_SKILLS_RESPONSE_INVALID", "RAG 服务返回未通过浏览器合同校验。", 502);
@@ -83,6 +86,17 @@ function boundedObject(value: unknown, maximumBytes = 300_000): Readonly<Record<
 function finite(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fail();
   return value;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
 }
 
 function identifier(value: unknown, pattern: RegExp): string {
@@ -217,13 +231,6 @@ export function parseGovernanceSkillConfirmation(value: unknown): GovernanceSkil
   });
 }
 
-const DISPATCH_INTENTS = new Set<GovernanceAssistantDispatchIntent>([
-  "answer", "start_analysis", "open_review", "submit_review", "draft_report",
-]);
-const ANSWER_MODES = new Set<GovernanceAnswerMode>([
-  "overview", "analysis_summary", "coordination_summary", "evidence_requirements", "review_guidance", "method_scope", "knowledge", "case_draft",
-]);
-
 function assistantSkillTrace(value: unknown): GovernanceAssistantSkillTrace {
   const trace = object(value);
   const traceSkill = skill(trace.skill);
@@ -231,107 +238,79 @@ function assistantSkillTrace(value: unknown): GovernanceAssistantSkillTrace {
   return Object.freeze({ skill: traceSkill, requestHash: hash(trace.requestHash), resultHash: hash(trace.resultHash) });
 }
 
-export function parseGovernanceAssistantDispatch(value: unknown): GovernanceAssistantDispatchResponse {
+function assistantSkill(value: unknown): AssistantSkillName {
+  const result = text(value, 100);
+  if (!ASSISTANT_SKILL_SET.has(result)) return fail();
+  return result as AssistantSkillName;
+}
+
+function assistantSkillDescriptor(value: unknown): AssistantSkillDescriptor {
   const item = object(value);
-  if (item.schemaVersion !== GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA) return fail();
-  const intentValue = text(item.intent, 40) as GovernanceAssistantDispatchIntent;
-  if (!DISPATCH_INTENTS.has(intentValue)) return fail();
-  const answerMode = item.answerMode === undefined
-    ? intentValue === "answer" ? "overview" : null
-    : item.answerMode === null
-      ? null
-    : text(item.answerMode, 40) as GovernanceAnswerMode;
-  if ((intentValue === "answer") !== Boolean(answerMode)) return fail();
-  if (answerMode && !ANSWER_MODES.has(answerMode)) return fail();
-  const status = item.status === "completed" || item.status === "confirmation_required" || item.status === "blocked"
-    ? item.status : fail();
-  const confirmationValue = item.confirmation === null || item.confirmation === undefined ? null : confirmation(item.confirmation);
-  if ((status === "confirmation_required") !== Boolean(confirmationValue)) return fail();
-  const expectedConfirmationAction: Partial<Record<GovernanceAssistantDispatchIntent, GovernanceConfirmationAction>> = {
-    start_analysis: "run_governance_analysis",
-    submit_review: "submit_review",
-    draft_report: "save_draft_report",
-  };
-  if (status === "confirmation_required"
-    && confirmationValue?.action !== expectedConfirmationAction[intentValue]) return fail();
-  let navigation: GovernanceAssistantDispatchResponse["navigation"] = null;
-  if (item.navigation !== null && item.navigation !== undefined) {
-    const raw = object(item.navigation);
-    if (raw.view !== "governance_review") return fail();
-    const rawTarget = raw.target === null || raw.target === undefined ? null : object(raw.target);
-    const target = rawTarget ? (() => {
-      if (rawTarget.targetType !== "node" && rawTarget.targetType !== "relation" && rawTarget.targetType !== "group") return fail();
-      return Object.freeze({ targetType: rawTarget.targetType, targetId: text(rawTarget.targetId, 300) });
-    })() : undefined;
-    navigation = Object.freeze({
-      view: "governance_review" as const,
-      runId: identifier(raw.runId, /^governance-[0-9a-f]{32}$/u),
-      ...(raw.caseId ? { caseId: identifier(raw.caseId, /^case-[0-9a-f]{32}$/u) } : {}),
-      ...(target ? { target } : {}),
-    });
-  }
-  if ((intentValue === "open_review" && status === "completed") !== Boolean(navigation)) return fail();
-  const skillCalls = item.skillCalls === undefined
-    ? []
-    : list(item.skillCalls, 4).map(assistantSkillTrace);
-  if (intentValue !== "answer" && skillCalls.length) return fail();
-  const generationMode = item.generationMode === undefined || item.generationMode === null
-    ? bool(item.deterministicFallback) ? "deterministic_report" as const : "llm_assisted" as const
-    : item.generationMode === "llm_assisted" || item.generationMode === "deterministic_report"
-      ? item.generationMode
-      : fail();
-  const fallbackPhase = item.fallbackPhase === undefined || item.fallbackPhase === null
-    ? null
-    : item.fallbackPhase === "intent" || item.fallbackPhase === "planning"
-      || item.fallbackPhase === "skill_execution" || item.fallbackPhase === "narration"
-      ? item.fallbackPhase
-      : fail();
-  const reasonCode = item.reasonCode === undefined || item.reasonCode === null
-    ? null
-    : text(item.reasonCode, 120);
-  const evidenceRefs = item.evidenceRefs === undefined ? [] : list(item.evidenceRefs, 50).map((entry) => {
-    const reference = object(entry);
-    if (reference.sourceKind !== "graph" && reference.sourceKind !== "skill"
-      && reference.sourceKind !== "knowledge" && reference.sourceKind !== "case") return fail();
-    return Object.freeze({
-      label: text(reference.label, 200),
-      sourceKind: reference.sourceKind,
-      hash: hash(reference.hash),
-    });
+  if (item.readOnly !== true || item.confirmationRequired !== false) return fail();
+  const governanceSkills = list(item.governanceSkills, 6).map((entry) => {
+    const result = skill(entry);
+    if (result === "run_governance_analysis" || result === "draft_review_report") return fail();
+    return result;
   });
   return Object.freeze({
-    schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-    dispatchId: identifier(item.dispatchId, /^governance-dispatch-[0-9a-f]{32}$/u),
-    intent: intentValue,
-    answerMode,
-    status,
-    answer: text(item.answer, 8_000),
-    result: boundedObject(item.result, 100_000),
-    deterministicFallback: bool(item.deterministicFallback),
-    generationMode,
-    fallbackPhase,
-    reasonCode,
-    evidenceRefs: Object.freeze(evidenceRefs),
-    confirmation: confirmationValue,
-    navigation,
-    skillCalls: Object.freeze(skillCalls),
-    citedHashes: Object.freeze(list(item.citedHashes, 50).map(hash)),
-    auditHash: hash(item.auditHash),
+    name: assistantSkill(item.name),
+    label: text(item.label, 100),
+    description: text(item.description, 1_000),
+    uiLocation: text(item.uiLocation, 200),
+    readOnly: true as const,
+    confirmationRequired: false as const,
+    governanceSkills: Object.freeze(governanceSkills),
+    parameterSchema: Object.freeze({ ...object(item.parameterSchema) }),
   });
 }
 
-export function parseGovernanceAssistantTurn(value: unknown): GovernanceAssistantTurnResponse {
+export function parseAssistantSkillCatalog(value: unknown): AssistantSkillCatalog {
   const item = object(value);
-  if (item.schemaVersion !== GOVERNANCE_ASSISTANT_SCHEMA) return fail();
-  const traces = list(item.skillCalls, 4).map(assistantSkillTrace);
-  const citedHashes = list(item.citedHashes, 50).map(hash);
+  if (item.schemaVersion !== ASSISTANT_SKILLS_SCHEMA) return fail();
+  const items = list(item.items, ASSISTANT_PUBLIC_SKILLS.length).map(assistantSkillDescriptor);
+  if (items.length !== ASSISTANT_PUBLIC_SKILLS.length
+    || items.some((entry, index) => {
+      const policy = ASSISTANT_SKILL_POLICIES[index];
+      return entry.name !== policy.name
+        || entry.label !== policy.label
+        || entry.description !== policy.description
+        || entry.uiLocation !== policy.uiLocation
+        || entry.readOnly !== policy.readOnly
+        || entry.confirmationRequired !== policy.confirmationRequired
+        || entry.governanceSkills.length !== policy.governanceSkills.length
+        || entry.governanceSkills.some((skillName, skillIndex) => skillName !== policy.governanceSkills[skillIndex])
+        || canonicalJson(entry.parameterSchema) !== canonicalJson(policy.parameterSchema);
+    })) return fail();
   return Object.freeze({
-    schemaVersion: GOVERNANCE_ASSISTANT_SCHEMA,
-    turnId: identifier(item.turnId, /^governance-turn-[0-9a-f]{32}$/u),
+    schemaVersion: ASSISTANT_SKILLS_SCHEMA,
+    items: Object.freeze(items),
+    catalogHash: hash(item.catalogHash),
+  });
+}
+
+function assistantEvidenceRef(value: unknown) {
+  const reference = object(value);
+  if (reference.sourceKind !== "graph" && reference.sourceKind !== "skill"
+    && reference.sourceKind !== "knowledge" && reference.sourceKind !== "case") return fail();
+  return Object.freeze({
+    label: text(reference.label, 200),
+    sourceKind: reference.sourceKind,
+    hash: hash(reference.hash),
+  });
+}
+
+export function parseAssistantSkillResult(value: unknown): AssistantSkillResult {
+  const item = object(value);
+  if (item.schemaVersion !== ASSISTANT_SKILL_RESULT_SCHEMA) return fail();
+  return Object.freeze({
+    schemaVersion: ASSISTANT_SKILL_RESULT_SCHEMA,
+    executionId: identifier(item.executionId, /^assistant-exec-[0-9a-f]{32}$/u),
+    skill: assistantSkill(item.skill),
     answer: text(item.answer, 8_000),
-    deterministicFallback: bool(item.deterministicFallback),
-    skillCalls: Object.freeze(traces),
-    citedHashes: Object.freeze(citedHashes),
+    result: boundedObject(item.result, 100_000),
+    skillCalls: Object.freeze(list(item.skillCalls, 5).map(assistantSkillTrace)),
+    evidenceRefs: Object.freeze(list(item.evidenceRefs, 50).map(assistantEvidenceRef)),
+    citedHashes: Object.freeze(list(item.citedHashes, 50).map(hash)),
     auditHash: hash(item.auditHash),
   });
 }
@@ -429,62 +408,38 @@ export class GovernanceSkillsClient implements GovernanceSkillsClientLike {
     });
   }
 
-  assistantTurn(
-    context: GovernanceSkillsContext,
-    message: string,
-    signal?: AbortSignal,
-  ): Promise<GovernanceAssistantTurnResponse> {
-    const normalized = message.trim();
-    if (!normalized || normalized.length > 2_000) {
-      return Promise.reject(new SocialGraphApiError("GFM_GOVERNANCE_ASSISTANT_MESSAGE_INVALID", "问题为空或超过 2,000 字。", 400));
-    }
-    return this.json("/assistant/turn", parseGovernanceAssistantTurn, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        schemaVersion: GOVERNANCE_ASSISTANT_SCHEMA,
-        graph: context.graph,
-        model: context.model,
-        message: normalized,
-        context: {
-          ...(context.runId ? { runId: context.runId } : {}),
-          ...(context.caseId ? { caseId: context.caseId } : {}),
-          selectedNodeIds: [...new Set(context.selectedNodeIds ?? [])].sort(),
-        },
-      }),
-      signal,
-    });
+  assistantCatalog(signal?: AbortSignal): Promise<AssistantSkillCatalog> {
+    return this.json("/assistant/skills", parseAssistantSkillCatalog, { signal });
   }
 
-  dispatchAssistant(
+  executeAssistant(
     context: GovernanceSkillsContext,
+    skillName: AssistantSkillName,
     message: string,
-    options: GovernanceAssistantDispatchContext = {},
     signal?: AbortSignal,
-  ): Promise<GovernanceAssistantDispatchResponse> {
+  ): Promise<AssistantSkillResult> {
     const normalized = message.trim();
     if (!normalized || normalized.length > 2_000) {
       return Promise.reject(new SocialGraphApiError("GFM_GOVERNANCE_ASSISTANT_MESSAGE_INVALID", "问题为空或超过 2,000 字。", 400));
     }
-    return this.json("/assistant/dispatch", parseGovernanceAssistantDispatch, {
+    if (!ASSISTANT_SKILL_SET.has(skillName)) {
+      return Promise.reject(new SocialGraphApiError("GFM_GOVERNANCE_ASSISTANT_SKILL_INVALID", "研判助手 Skill 不受支持。", 400));
+    }
+    return this.json("/assistant/execute", parseAssistantSkillResult, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
+        schemaVersion: ASSISTANT_SKILL_REQUEST_SCHEMA,
+        skill: skillName,
         graph: context.graph,
         model: context.model,
         message: normalized,
-        ...(options.intent ? { intent: options.intent } : {}),
-        ...(options.answerMode ? { answerMode: options.answerMode } : {}),
-        ...(options.narrationMode ? { narrationMode: options.narrationMode } : {}),
         context: {
           ...(context.runId ? { runId: context.runId } : {}),
           ...(context.caseId ? { caseId: context.caseId } : {}),
           ...(context.caseHash ? { caseHash: context.caseHash } : {}),
           ...(context.selectedTarget ? { selectedTarget: { targetType: context.selectedTarget.kind, targetId: context.selectedTarget.targetId } } : {}),
-          topK: options.topK ?? 100,
-          ...(options.reviewDecision ? { reviewDecision: options.reviewDecision } : {}),
-          ...(options.reviewReason ? { reviewReason: options.reviewReason } : {}),
+          topK: 100,
         },
       }),
       signal,

@@ -1,4 +1,4 @@
-"""Interpreter discovery, clean probing, compatibility checks, and pip installation."""
+"""CPU-only managed runtime discovery, verification, and installation."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -19,12 +18,11 @@ from .layout import RuntimeLayout, environment_python
 from .subprocess_control import run_captured_process, run_streaming_process
 
 
-PROBE_SCHEMA_VERSION = "socialgraph-fm.python-environment-probe/1.0"
-FINGERPRINT_SCHEMA_VERSION = "socialgraph-fm.python-environment-fingerprint/2.0"
-VALID_DEVICE_POLICIES = {"auto", "cpu", "cuda-required"}
+PROBE_SCHEMA_VERSION = "socialgraph-fm.python-environment-probe/2.0"
+FINGERPRINT_SCHEMA_VERSION = "socialgraph-fm.python-environment-fingerprint/3.0"
 
 # Parent-shell credentials are never an implicit configuration source. Only the
-# private LLM_API_* file is whitelisted into the Torch-free API service.
+# three values loaded from the private configuration file enter the API child.
 AMBIENT_LLM_ENVIRONMENT_NAMES = frozenset(
     {
         "ANTHROPIC_API_KEY",
@@ -50,37 +48,21 @@ AMBIENT_LLM_ENVIRONMENT_NAMES = frozenset(
     }
 )
 
-
-def is_ambient_llm_environment_name(name: str) -> bool:
-    upper = name.upper()
-    return upper.startswith("LLM_") or upper in AMBIENT_LLM_ENVIRONMENT_NAMES
-
-API_DISTRIBUTIONS = {
+RUNTIME_MODULES = {
     "fastapi": "fastapi",
     "httpx": "httpx",
+    "networkx": "networkx",
     "numpy": "numpy",
     "pydantic": "pydantic",
     "pydantic-settings": "pydantic_settings",
+    "pyg-lib": "pyg_lib",
     "python-multipart": "multipart",
+    "torch": "torch",
+    "torch-geometric": "torch_geometric",
     "uvicorn": "uvicorn",
 }
 
-GFM_MODULES = {
-    "torch": "torch",
-    "torch-geometric": "torch_geometric",
-    "pyg-lib": "pyg_lib",
-    "torch-scatter": "torch_scatter",
-    "torch-sparse": "torch_sparse",
-    "numpy": "numpy",
-    "pydantic": "pydantic",
-    "ogb": "ogb",
-    "FlagEmbedding": "FlagEmbedding",
-    "transformers": "transformers",
-}
-
-
 _PROBE_SOURCE = r"""
-import hashlib
 import importlib
 import importlib.metadata
 import json
@@ -101,22 +83,15 @@ for distribution, module in request["distributions"].items():
     except Exception:
         imports[module] = False
 
-torch_details = {"available": False, "version": None, "cudaRuntime": None,
-                 "cudaAvailable": False, "deviceName": None, "deviceCount": 0,
-                 "deviceCapability": None}
+torch_details = {"available": False, "version": None, "cpuBuild": None}
 neighbor_loader = None
 if imports.get("torch"):
     import torch
-    cuda_available = bool(torch.cuda.is_available())
-    torch_details.update({
+    torch_details = {
         "available": True,
         "version": str(torch.__version__),
-        "cudaRuntime": torch.version.cuda,
-        "cudaAvailable": cuda_available,
-        "deviceName": torch.cuda.get_device_name(0) if cuda_available else None,
-        "deviceCount": int(torch.cuda.device_count()) if cuda_available else 0,
-        "deviceCapability": list(torch.cuda.get_device_capability(0)) if cuda_available else None,
-    })
+        "cpuBuild": torch.version.cuda is None,
+    }
 if request.get("neighborLoader") and imports.get("torch") and imports.get("torch_geometric"):
     try:
         import torch
@@ -136,11 +111,11 @@ if request.get("neighborLoader") and imports.get("torch") and imports.get("torch
         )
         batch = next(iter(loader))
         neighbor_loader = bool(batch.num_nodes >= batch.batch_size > 0)
-    except Exception as error:
+    except Exception:
         neighbor_loader = False
 
 print(json.dumps({
-    "schemaVersion": "socialgraph-fm.python-environment-probe/1.0",
+    "schemaVersion": "socialgraph-fm.python-environment-probe/2.0",
     "executable": sys.executable,
     "implementation": platform.python_implementation(),
     "pythonVersion": platform.python_version(),
@@ -156,9 +131,12 @@ print(json.dumps({
 """
 
 
-def clean_process_environment(*, python_path: str | None = None) -> dict[str, str]:
-    """Return the environment used for every compatibility probe and Python child."""
+def is_ambient_llm_environment_name(name: str) -> bool:
+    upper = name.upper()
+    return upper.startswith("LLM_") or upper in AMBIENT_LLM_ENVIRONMENT_NAMES
 
+
+def clean_process_environment(*, python_path: str | None = None) -> dict[str, str]:
     environment = dict(os.environ)
     for name in tuple(environment):
         upper = name.upper()
@@ -177,9 +155,7 @@ def clean_process_environment(*, python_path: str | None = None) -> dict[str, st
 
 
 def resolve_python(value: str | os.PathLike[str]) -> Path:
-    # Do not call Path.resolve() here. POSIX virtual environments normally expose
-    # bin/python as a symlink to the base interpreter; dereferencing it would make
-    # pip and child processes run outside the selected venv.
+    # POSIX venv launchers are symlinks. Do not resolve them outside the venv.
     candidate = Path(os.path.abspath(Path(value).expanduser()))
     if candidate.is_file():
         return candidate
@@ -195,22 +171,13 @@ def candidate_pythons(
     recorded: str | None = None,
     managed: Path | None = None,
 ) -> list[Path]:
-    """Return only authorized reuse candidates, in fail-closed priority order.
-
-    An arbitrary system/PATH interpreter is deliberately not a reuse candidate.
-    The bootstrap interpreter is allowed to create a managed environment, but it is
-    not silently adopted as the application runtime.
-    """
+    """Compatibility helper: only explicitly authorized paths are candidates."""
 
     candidates: list[str | os.PathLike[str]] = []
     if explicit:
         candidates.append(explicit)
     if recorded:
         candidates.append(recorded)
-    for variable in ("VIRTUAL_ENV", "CONDA_PREFIX"):
-        root = os.environ.get(variable, "").strip()
-        if root:
-            candidates.append(environment_python(Path(root)))
     if managed is not None:
         candidates.append(environment_python(managed))
     result: list[Path] = []
@@ -320,21 +287,13 @@ def python_satisfies(version: str, requirement: str) -> bool:
 
 
 def distribution_satisfies(version: str, requirement: str) -> bool:
-    """Evaluate the simple PEP 440 ranges used by this repository."""
-
-    public = version.split("+", 1)[0]
-    return python_satisfies(public, requirement)
+    return python_satisfies(version.split("+", 1)[0], requirement)
 
 
-def _fingerprint(report: dict[str, Any], capability: str) -> dict[str, Any]:
-    torch_report = report["torch"]
-    static_torch = {
-        key: torch_report.get(key)
-        for key in ("available", "version", "cudaRuntime")
-    }
+def _fingerprint(report: dict[str, Any]) -> dict[str, Any]:
     identity = {
         "schemaVersion": FINGERPRINT_SCHEMA_VERSION,
-        "capability": capability,
+        "capability": "runtime",
         "executable": report["executable"],
         "executableSha256": report["executableSha256"],
         "implementation": report["implementation"],
@@ -345,7 +304,7 @@ def _fingerprint(report: dict[str, Any], capability: str) -> dict[str, Any]:
         "libcVersion": report["libcVersion"],
         "versions": report["versions"],
         "imports": report["imports"],
-        "torch": static_torch,
+        "torch": report["torch"],
         "neighborLoader": report["neighborLoader"],
     }
     encoded = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -358,149 +317,44 @@ class CompatibilityResult:
     compatible: bool
     errors: tuple[str, ...]
     fingerprint: dict[str, Any]
-    runtime_capabilities: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class DeviceResolution:
-    wheel_family: str
-    device_policy: str
-    resolved_device: str
-    cuda_available: bool
-    fallback_reason: str | None
-
-    def to_document(self) -> dict[str, Any]:
-        return {
-            "wheelFamily": self.wheel_family,
-            "devicePolicy": self.device_policy,
-            "resolvedDevice": self.resolved_device,
-            "cudaAvailable": self.cuda_available,
-            "fallbackReason": self.fallback_reason,
-        }
-
-
-def install_profile_wheel_family(profile: dict[str, Any]) -> str:
-    family = str(profile.get("wheelFamily", profile.get("device", ""))).lower()
-    if family not in {"cpu", "cuda"}:
-        raise RuntimeError(f"Install profile {profile.get('id')} has an invalid wheel family")
-    return family
-
-
-def resolve_execution_device(
-    profile: dict[str, Any], result: CompatibilityResult, device_policy: str
-) -> DeviceResolution:
-    policy = device_policy.lower()
-    if policy not in VALID_DEVICE_POLICIES:
-        raise RuntimeError(f"Unsupported GFM device policy: {device_policy}")
-    family = install_profile_wheel_family(profile)
-    cuda_available = result.runtime_capabilities.get("cudaAvailable") is True
-    if family == "cpu":
-        if policy == "cuda-required":
-            raise RuntimeError("The selected CPU wheel profile cannot require CUDA execution")
-        return DeviceResolution(
-            family,
-            policy,
-            "cpu",
-            False,
-            "cpu-wheel" if policy == "auto" else "policy-forced-cpu",
-        )
-    if policy == "cpu":
-        return DeviceResolution(family, policy, "cpu", cuda_available, "policy-forced-cpu")
-    if policy == "cuda-required" and not cuda_available:
-        raise RuntimeError("CUDA execution is required but torch.cuda.is_available() is false")
-    if cuda_available:
-        return DeviceResolution(family, policy, "cuda", True, None)
-    return DeviceResolution(family, policy, "cpu", False, "cuda-unavailable")
-
-
-def _api_declared_requirements(api_root: Path) -> dict[str, str]:
-    pyproject = api_root / "pyproject.toml"
-    try:
-        document = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as error:
-        raise RuntimeError(f"API pyproject is invalid: {pyproject}") from error
-    requirements: dict[str, str] = {}
-    for raw in document.get("project", {}).get("dependencies", []):
-        match = re.match(r"^([A-Za-z0-9_.-]+)(?:\[[^]]+\])?\s*(.*)$", str(raw))
-        if not match:
-            raise RuntimeError(f"Unsupported API dependency declaration: {raw}")
-        name, specifier = match.groups()
-        requirements[name.lower().replace("_", "-")] = specifier.strip()
-    return requirements
-
-
-def probe_api_environment(python: Path, api_root: Path | None = None) -> CompatibilityResult:
-    report = probe_python(
-        python,
-        {**API_DISTRIBUTIONS, "torch": "torch", "torch-geometric": "torch_geometric"},
-    )
-    errors: list[str] = []
-    if not python_satisfies(report["pythonVersion"], ">=3.12,<3.13"):
-        errors.append(f"Python {report['pythonVersion']} does not satisfy >=3.12,<3.13")
-    for distribution, module in API_DISTRIBUTIONS.items():
-        if report["versions"].get(distribution) is None:
-            errors.append(f"missing {distribution}")
-        if report["imports"].get(module) is not True:
-            errors.append(f"cannot import {module} ({distribution})")
-    if api_root is not None:
-        declared = _api_declared_requirements(api_root)
-        for distribution, requirement in declared.items():
-            actual = report["versions"].get(distribution)
-            if actual is not None and requirement and not distribution_satisfies(actual, requirement):
-                errors.append(f"{distribution}={actual} does not satisfy {requirement}")
-    for forbidden in ("torch", "torch-geometric"):
-        if report["versions"].get(forbidden) is not None:
-            errors.append(f"API environment contains forbidden {forbidden}")
-    ready, detail = pip_check(python)
-    if not ready:
-        errors.append(f"pip check failed: {detail}")
-    return CompatibilityResult(not errors, tuple(errors), _fingerprint(report, "api"))
 
 
 def probe_bootstrap_environment(python: Path) -> CompatibilityResult:
     report = probe_python(python, {})
-    errors: list[str] = []
-    if not python_satisfies(report["pythonVersion"], ">=3.12,<3.13"):
-        errors.append(f"Python {report['pythonVersion']} does not satisfy >=3.12,<3.13")
-    return CompatibilityResult(not errors, tuple(errors), _fingerprint(report, "bootstrap"))
+    errors = (
+        ()
+        if python_satisfies(report["pythonVersion"], ">=3.12,<3.13")
+        else (f"Python {report['pythonVersion']} does not satisfy >=3.12,<3.13",)
+    )
+    fingerprint = _fingerprint(report)
+    fingerprint["capability"] = "bootstrap"
+    return CompatibilityResult(not errors, errors, fingerprint)
 
 
-def probe_gfm_environment(python: Path, profile: dict[str, Any]) -> CompatibilityResult:
+def probe_runtime_environment(
+    python: Path, profile: dict[str, Any]
+) -> CompatibilityResult:
     versions = profile.get("distributionVersions")
     if not isinstance(versions, dict) or not versions:
         raise RuntimeError(f"Install profile {profile.get('id')} has no distributionVersions")
     distributions = {
-        str(name): GFM_MODULES.get(str(name), str(name).replace("-", "_"))
+        str(name): RUNTIME_MODULES.get(str(name), str(name).replace("-", "_"))
         for name in versions
     }
-    # These modules are operational requirements even if a profile forgot to list one.
-    for distribution in ("torch", "torch-geometric", "pyg-lib", "numpy", "pydantic", "ogb"):
-        distributions.setdefault(distribution, GFM_MODULES[distribution])
     report = probe_python(python, distributions, neighbor_loader=True)
     errors: list[str] = []
-    system_aliases = {
-        "windows": "windows",
-        "linux": "linux",
-        "darwin": "macos",
-        "macos": "macos",
-    }
-    actual_system = system_aliases.get(str(report["system"]).lower(), str(report["system"]).lower())
-    expected_system = system_aliases.get(
-        str(profile.get("system", "")).lower(), str(profile.get("system", "")).lower()
+    actual_system, actual_machine = normalized_platform(
+        system=str(report["system"]), machine=str(report["machine"])
     )
-    actual_machine = str(report["machine"]).lower()
-    actual_machine = {"amd64": "x86_64", "x64": "x86_64", "aarch64": "arm64"}.get(
-        actual_machine, actual_machine
-    )
-    expected_machine = str(profile.get("machine", "")).lower()
+    expected_system = str(profile["system"]).lower()
+    expected_machine = str(profile["machine"]).lower()
     if actual_system != expected_system:
         errors.append(f"platform system {actual_system} (required {expected_system})")
     if actual_machine != expected_machine:
         errors.append(f"platform machine {actual_machine} (required {expected_machine})")
-    expected_libc = profile.get("libc")
-    if expected_libc is not None and report.get("libc") != expected_libc:
+    if profile.get("libc") is not None and report.get("libc") != profile["libc"]:
         errors.append(
-            f"platform libc {report.get('libc') or 'unknown'} (required {expected_libc})"
+            f"platform libc {report.get('libc') or 'unknown'} (required {profile['libc']})"
         )
     requirement = str(profile.get("pythonRequires", ">=3.12,<3.13"))
     if not python_satisfies(report["pythonVersion"], requirement):
@@ -509,57 +363,21 @@ def probe_gfm_environment(python: Path, profile: dict[str, Any]) -> Compatibilit
         actual = report["versions"].get(distribution)
         if actual != expected:
             errors.append(f"{distribution}={actual!s} (required {expected})")
-    for required in ("torch", "torch-geometric", "pyg-lib", "numpy", "pydantic", "ogb"):
-        if report["versions"].get(required) is None:
-            errors.append(f"missing {required}")
-        module = GFM_MODULES[required]
+        module = distributions[distribution]
         if report["imports"].get(module) is not True:
-            errors.append(f"cannot import {module} ({required})")
+            errors.append(f"cannot import {module} ({distribution})")
+    if report["torch"].get("cpuBuild") is not True:
+        errors.append("Torch is not the verified CPU build")
     if report.get("neighborLoader") is not True:
         errors.append("PyG NeighborLoader smoke failed")
-    wheel_family = install_profile_wheel_family(profile)
-    torch_report = report["torch"]
-    expected_backend = str(profile.get("torchBackend", ""))
-    runtime = str(torch_report.get("cudaRuntime") or "")
-    if wheel_family == "cpu":
-        if expected_backend != "cpu":
-            errors.append(f"CPU wheel profile has unexpected backend {expected_backend}")
-        if torch_report.get("cudaRuntime") is not None:
-            errors.append(f"CPU wheel profile contains CUDA runtime {runtime}")
-    else:
-        if not expected_backend.startswith("cu"):
-            errors.append(f"CUDA wheel profile has unexpected backend {expected_backend}")
-        else:
-            expected_runtime = f"{int(expected_backend[2:]) // 10}.{int(expected_backend[2:]) % 10}"
-            if not runtime.startswith(expected_runtime):
-                errors.append(
-                    f"Compiled CUDA runtime {runtime or 'missing'} does not match {expected_backend}"
-                )
     ready, detail = pip_check(python)
     if not ready:
         errors.append(f"pip check failed: {detail}")
-    runtime_capabilities = {
-        "wheelFamily": wheel_family,
-        "torchBackend": expected_backend,
-        "cudaRuntime": torch_report.get("cudaRuntime"),
-        "cudaAvailable": torch_report.get("cudaAvailable") is True,
-        "deviceName": torch_report.get("deviceName"),
-        "deviceCount": torch_report.get("deviceCount", 0),
-        "deviceCapability": torch_report.get("deviceCapability"),
-    }
-    return CompatibilityResult(
-        not errors,
-        tuple(errors),
-        _fingerprint(report, "gfm"),
-        runtime_capabilities,
-    )
+    return CompatibilityResult(not errors, tuple(errors), _fingerprint(report))
 
 
 def interpreter_record(
-    python: Path,
-    *,
-    source: str,
-    result: CompatibilityResult,
+    python: Path, *, source: str, result: CompatibilityResult
 ) -> dict[str, Any]:
     return {
         "path": str(resolve_python(python)),
@@ -568,73 +386,71 @@ def interpreter_record(
     }
 
 
-def normalized_platform() -> tuple[str, str]:
-    system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}.get(
-        platform.system(), platform.system().lower()
-    )
-    machine = platform.machine().lower()
-    machine = {"amd64": "x86_64", "x64": "x86_64", "aarch64": "arm64"}.get(machine, machine)
-    return system, machine
+def normalized_platform(
+    *, system: str | None = None, machine: str | None = None
+) -> tuple[str, str]:
+    selected_system = system or platform.system()
+    normalized_system = {
+        "Windows": "windows",
+        "Linux": "linux",
+    }.get(selected_system, selected_system.lower())
+    selected_machine = (machine or platform.machine()).lower()
+    normalized_machine = {
+        "amd64": "x86_64",
+        "x64": "x86_64",
+    }.get(selected_machine, selected_machine)
+    return normalized_system, normalized_machine
 
 
 def load_install_profiles(path: Path) -> dict[str, dict[str, Any]]:
-    if not path.is_file():
-        raise RuntimeError(
-            f"GFM install profile catalog is missing: {path}. "
-            "Managed ML installation cannot select verified wheels."
-        )
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
+        manifest_path = path.parent / "locks" / "install-lock-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"GFM install profile catalog is invalid: {path}") from error
-    if document.get("schemaVersion") != "socialgraph-fm.gfm-install-profiles/1.0":
-        raise RuntimeError(f"GFM install profile catalog schema is unsupported: {path}")
-    manifest_path = path.parent / "locks" / "install-lock-manifest.json"
+        raise RuntimeError("CPU runtime profile catalog or lock manifest is invalid") from error
+    if document.get("schemaVersion") != "socialgraph-fm.gfm-install-profiles/2.0":
+        raise RuntimeError("CPU runtime profile catalog schema is unsupported")
+    if manifest.get("schemaVersion") != "socialgraph-fm.gfm-install-lock-manifest/2.0":
+        raise RuntimeError("CPU runtime lock manifest schema is unsupported")
+    if manifest.get("profilesFile") != path.name or manifest.get("profilesSha256") != _sha256(path):
+        raise RuntimeError("CPU runtime profile catalog does not match its lock manifest")
+    source_candidate = path.parent / str(manifest.get("runtimeRequirementsFile", ""))
+    source = source_candidate.resolve()
     try:
-        lock_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"GFM install lock manifest is invalid: {manifest_path}") from error
-    if lock_manifest.get("schemaVersion") != "socialgraph-fm.gfm-install-lock-manifest/1.0":
-        raise RuntimeError(f"GFM install lock manifest schema is unsupported: {manifest_path}")
-    if (
-        lock_manifest.get("profilesFile") != path.name
-        or lock_manifest.get("profilesSha256") != _sha256(path)
-    ):
-        raise RuntimeError("GFM install profile catalog does not match its lock manifest")
-    build_requirements = lock_manifest.get("buildRequirementsFile")
-    if not isinstance(build_requirements, str):
-        raise RuntimeError("GFM install lock manifest has no build requirements source")
-    build_path = (path.parent / build_requirements).resolve()
-    try:
-        build_path.relative_to(path.parent.resolve())
+        source.relative_to(path.parent.resolve())
     except ValueError as error:
-        raise RuntimeError("GFM build requirements path escapes packages/gfm") from error
+        raise RuntimeError("CPU runtime requirements source escapes packages/gfm") from error
     if (
-        not build_path.is_file()
-        or lock_manifest.get("buildRequirementsSha256") != _sha256(build_path)
+        source_candidate.is_symlink()
+        or not source.is_file()
+        or manifest.get("runtimeRequirementsSha256") != _sha256(source)
     ):
-        raise RuntimeError("GFM build requirements source failed integrity validation")
+        raise RuntimeError("CPU runtime requirements source failed integrity validation")
+    policy = manifest.get("policy")
+    if (
+        not isinstance(policy, dict)
+        or policy.get("sourceBuildsAllowed") is not False
+        or policy.get("hashesRequired") is not True
+        or policy.get("runtimeEnvironmentCount") != 1
+        or policy.get("supportedDevices") != ["cpu"]
+        or policy.get("supportedSystems") != ["Windows", "Linux"]
+    ):
+        raise RuntimeError("CPU runtime lock policy is invalid")
     raw = document.get("profiles")
+    manifest_profiles = manifest.get("profiles")
+    if not isinstance(raw, dict) or not isinstance(manifest_profiles, dict):
+        raise RuntimeError("CPU runtime profile inventories are invalid")
     profiles: dict[str, dict[str, Any]] = {}
-    entries: Iterable[tuple[str, Any]]
-    if isinstance(raw, dict):
-        entries = ((str(identifier), value) for identifier, value in raw.items())
-    elif isinstance(raw, list):
-        entries = ((str(entry.get("id", "")), entry) for entry in raw if isinstance(entry, dict))
-    else:
-        raise RuntimeError(f"GFM install profile catalog has no profiles: {path}")
-    for identifier, value in entries:
-        if not identifier or not isinstance(value, dict):
-            raise RuntimeError(f"GFM install profile entry is invalid: {identifier!r}")
+    for identifier, value in raw.items():
+        if not isinstance(identifier, str) or not isinstance(value, dict):
+            raise RuntimeError("CPU runtime profile entry is invalid")
         profile = dict(value)
-        profile.setdefault("id", identifier)
+        profile["id"] = identifier
         required = {
             "system",
             "machine",
-            "device",
-            "wheelFamily",
             "pythonRequires",
-            "torchBackend",
             "indexUrl",
             "torchIndexUrl",
             "findLinks",
@@ -644,130 +460,79 @@ def load_install_profiles(path: Path) -> dict[str, dict[str, Any]]:
         missing = sorted(required - profile.keys())
         if missing:
             raise RuntimeError(f"Install profile {identifier} is missing: {', '.join(missing)}")
-        if profile["wheelFamily"] not in {"cpu", "cuda"} or (
-            profile["device"] != profile["wheelFamily"]
-        ):
-            raise RuntimeError(
-                f"Install profile {identifier} wheel family is inconsistent"
-            )
-        torch_index = str(profile["torchIndexUrl"])
-        find_links = profile["findLinks"]
         if (
             profile["indexUrl"] != "https://pypi.org/simple"
-            or torch_index
-            not in {
-                "https://pypi.org/simple",
-                "https://download.pytorch.org/whl/cpu",
-                "https://download.pytorch.org/whl/cu130",
-            }
-            or not isinstance(find_links, list)
-            or not find_links
-            or any(
-                not isinstance(link, str)
-                or not link.startswith("https://data.pyg.org/whl/")
-                for link in find_links
-            )
+            or profile["torchIndexUrl"] != "https://download.pytorch.org/whl/cpu"
+            or not isinstance(profile["findLinks"], list)
+            or profile["findLinks"] != ["https://data.pyg.org/whl/torch-2.8.0+cpu.html"]
         ):
             raise RuntimeError(f"Install profile {identifier} uses an unapproved wheel source")
-        manifest_profile = lock_manifest.get("profiles", {}).get(identifier)
+        manifest_profile = manifest_profiles.get(identifier)
         if not isinstance(manifest_profile, dict):
             raise RuntimeError(f"Install profile {identifier} is absent from the lock manifest")
-        if manifest_profile.get("requirementsLock") != profile["requirementsLock"]:
-            raise RuntimeError(f"Install profile {identifier} lock path does not match its manifest")
-        lock_path = (path.parent / str(profile["requirementsLock"])).resolve()
+        lock_candidate = path.parent / str(profile["requirementsLock"])
+        lock = lock_candidate.resolve()
         try:
-            lock_path.relative_to(path.parent.resolve())
+            lock.relative_to(path.parent.resolve())
         except ValueError as error:
             raise RuntimeError(f"Install profile {identifier} lock escapes packages/gfm") from error
         if (
-            not lock_path.is_file()
-            or manifest_profile.get("requirementsLockSha256") != _sha256(lock_path)
+            manifest_profile.get("requirementsLock") != profile["requirementsLock"]
+            or lock_candidate.is_symlink()
+            or not lock.is_file()
+            or manifest_profile.get("requirementsLockSha256") != _sha256(lock)
             or manifest_profile.get("artifactHashesResolved") is not True
         ):
             raise RuntimeError(f"Install profile {identifier} lock integrity validation failed")
         profile["requirementsLockSha256"] = manifest_profile["requirementsLockSha256"]
         profiles[identifier] = profile
-    manifest_profiles = lock_manifest.get("profiles")
-    if not isinstance(manifest_profiles, dict) or set(manifest_profiles) != set(profiles):
-        raise RuntimeError("GFM install profile and lock manifest inventories differ")
-    policy = lock_manifest.get("policy")
-    if (
-        not isinstance(policy, dict)
-        or policy.get("sourceBuildsAllowed") is not False
-        or policy.get("requireArtifactHashesForManagedInstall") is not True
-    ):
-        raise RuntimeError("GFM install lock manifest does not prohibit source builds")
+    if set(profiles) != set(manifest_profiles):
+        raise RuntimeError("CPU runtime profile and lock manifest inventories differ")
     return profiles
 
 
 def select_install_profile(
-    profiles: dict[str, dict[str, Any]], wheel_selection: str
+    profiles: dict[str, dict[str, Any]], _selection: str | None = None
 ) -> dict[str, Any]:
     system, machine = normalized_platform()
-    libc_name = platform.libc_ver()[0] or None
-    system_aliases = {"windows": "windows", "linux": "linux", "darwin": "macos", "macos": "macos"}
-    normalized_selection = wheel_selection.lower()
-    exact = profiles.get(normalized_selection)
-    if exact is not None:
-        matches_platform = (
-            system_aliases.get(
-                str(exact["system"]).lower(), str(exact["system"]).lower()
-            )
-            == system
-            and str(exact["machine"]).lower() == machine
-            and (exact.get("libc") is None or exact.get("libc") == libc_name)
-        )
-        if not matches_platform:
-            raise RuntimeError(
-                f"Install profile {normalized_selection} does not match {system}/{machine}"
-            )
-        return exact
-    if normalized_selection not in {"cpu", "cuda"}:
-        available = ", ".join(sorted(profiles))
+    if system not in {"windows", "linux"} or machine != "x86_64":
         raise RuntimeError(
-            f"Unknown GFM wheel profile {wheel_selection!r}; available: {available}"
+            f"SocialGraph-FM supports only Windows x64 and Ubuntu glibc x64: {system}/{machine}"
         )
+    libc_name = platform.libc_ver()[0] or None
     matches = [
-        value
-        for value in profiles.values()
-        if system_aliases.get(str(value["system"]).lower(), str(value["system"]).lower()) == system
-        and str(value["machine"]).lower() == machine
-        and install_profile_wheel_family(value) == normalized_selection
-        and (value.get("libc") is None or value.get("libc") == libc_name)
+        profile
+        for profile in profiles.values()
+        if str(profile["system"]).lower() == system
+        and str(profile["machine"]).lower() == machine
+        and (profile.get("libc") is None or profile.get("libc") == libc_name)
     ]
     if len(matches) != 1:
-        available = ", ".join(sorted(profiles))
-        raise RuntimeError(
-            f"No unique install profile for {system}/{machine}/{normalized_selection}; "
-            f"available: {available}"
-        )
+        raise RuntimeError(f"No verified CPU runtime lock for {system}/{machine}")
     return matches[0]
 
 
-def ensure_bootstrap_python(
-    value: str | None, requirement: str = ">=3.12,<3.13"
-) -> Path:
-    selected = resolve_python(value or sys.executable)
+def ensure_bootstrap_python(requirement: str = ">=3.12,<3.13") -> Path:
+    selected = resolve_python(sys.executable)
     report = probe_python(selected, {})
     if not python_satisfies(report["pythonVersion"], requirement):
         raise RuntimeError(
-            f"Bootstrap Python {report['pythonVersion']} does not satisfy {requirement}: {selected}"
+            f"Python {report['pythonVersion']} does not satisfy {requirement}: {selected}"
         )
     return selected
 
 
 def create_venv(bootstrap_python: Path, destination: Path) -> Path:
     python = environment_python(destination)
-    if not python.is_file():
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        completed = run_clean_python(
-            bootstrap_python,
-            ("-I", "-m", "venv", str(destination)),
-            timeout=300,
-        )
-        if completed.returncode != 0:
-            detail = completed.stderr.strip() or completed.stdout.strip()
-            raise RuntimeError(f"Could not create Python environment {destination}: {detail}")
+    if python.is_file():
+        raise RuntimeError(f"Refusing to install over an existing environment: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    completed = run_clean_python(
+        bootstrap_python, ("-I", "-m", "venv", str(destination)), timeout=300
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"Could not create Python environment {destination}: {detail}")
     return resolve_python(python)
 
 
@@ -776,86 +541,92 @@ def _pip_install(
     arguments: Iterable[str],
     *,
     cwd: Path,
-    timeout: int = 1800,
     logger: Callable[[str], None] | None = None,
 ) -> None:
-    selected_arguments = tuple(arguments)
     if logger is not None:
-        logger(f"pip install started: {python}")
+        logger(f"CPU runtime dependency installation started: {python}")
     run_streaming_process(
-        [
-            str(python),
-            "-I",
-            "-m",
-            "pip",
-            "--isolated",
-            "install",
-            *selected_arguments,
-        ],
+        [str(python), "-I", "-m", "pip", "--isolated", "install", *arguments],
         cwd=cwd,
         environment=clean_process_environment(),
-        timeout=timeout,
+        timeout=1800,
         logger=logger,
-        description=f"pip installation for {python}",
+        description=f"CPU runtime installation for {python}",
     )
 
 
-def install_api_environment(
-    layout: RuntimeLayout,
-    bootstrap_python: Path,
-    *,
-    destination: Path,
-    logger: Callable[[str], None] | None = None,
-) -> Path:
-    python = create_venv(bootstrap_python, destination)
-    lock = layout.api_root / "requirements.lock"
-    if not lock.is_file():
-        raise RuntimeError(f"API runtime lock is missing: {lock}")
-    _pip_install(
+def _purelib(python: Path) -> Path:
+    completed = run_clean_python(
         python,
-        (
-            "--require-hashes",
-            "--only-binary=:all:",
-            "--index-url",
-            "https://pypi.org/simple",
-            "-r",
-            str(lock),
-        ),
-        cwd=layout.api_root,
-        logger=logger,
+        ("-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"),
     )
-    return python
+    if completed.returncode != 0:
+        raise RuntimeError("Could not locate the managed runtime site-packages")
+    return Path(completed.stdout.strip())
 
 
-def install_gfm_environment(
+def prune_torch_build_assets(python: Path) -> tuple[str, ...]:
+    """Remove version-pinned compiler-only Torch payload after installation."""
+
+    report = probe_python(python, {"torch": "torch"})
+    if report["versions"].get("torch") != "2.8.0+cpu" or report["torch"].get("cpuBuild") is not True:
+        raise RuntimeError("Torch build-asset pruning requires the verified 2.8.0 CPU wheel")
+    environment_root = Path(python).parent.parent
+    site_packages = _purelib(python)
+    resolved_environment = environment_root.resolve()
+    resolved_site_packages = site_packages.resolve()
+    try:
+        resolved_site_packages.relative_to(resolved_environment)
+    except ValueError as error:
+        raise RuntimeError("Torch build assets are outside the managed runtime") from error
+    if site_packages.is_symlink():
+        raise RuntimeError("Managed runtime site-packages cannot be a link")
+    torch_root = site_packages / "torch"
+    if torch_root.is_symlink() or torch_root.resolve() != resolved_site_packages / "torch":
+        raise RuntimeError("Managed Torch package cannot be a link or reparse point")
+    targets = [torch_root / "include", torch_root / "share" / "cmake"]
+    suffix = "*.lib" if os.name == "nt" else "*.a"
+    targets.extend((torch_root / "lib").glob(suffix))
+    removed: list[str] = []
+    for target in targets:
+        if not target.exists():
+            continue
+        try:
+            target.relative_to(torch_root)
+        except ValueError as error:
+            raise RuntimeError("Unsafe Torch build-asset path") from error
+        relative = target.relative_to(site_packages).as_posix()
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        removed.append(relative)
+    return tuple(sorted(removed))
+
+
+def install_runtime_environment(
     layout: RuntimeLayout,
     bootstrap_python: Path,
     profile: dict[str, Any],
     *,
-    destination: Path | None = None,
+    destination: Path,
     logger: Callable[[str], None] | None = None,
 ) -> Path:
     requirement = str(profile["pythonRequires"])
     bootstrap_report = probe_python(bootstrap_python, {})
     if not python_satisfies(bootstrap_report["pythonVersion"], requirement):
         raise RuntimeError(
-            f"Managed GFM profile requires Python {requirement}; bootstrap is "
+            f"Managed runtime requires Python {requirement}; bootstrap is "
             f"{bootstrap_report['pythonVersion']}"
         )
-    python = create_venv(
-        bootstrap_python,
-        destination or layout.gfm_environment(str(profile["id"])),
-    )
+    python = create_venv(bootstrap_python, destination)
     lock = (layout.gfm_package / str(profile["requirementsLock"])).resolve()
     try:
         lock.relative_to(layout.gfm_package.resolve())
     except ValueError as error:
-        raise RuntimeError(f"Install profile lock escapes packages/gfm: {lock}") from error
-    if not lock.is_file():
-        raise RuntimeError(f"GFM runtime lock is missing: {lock}")
-    expected_lock_hash = profile.get("requirementsLockSha256")
-    if not isinstance(expected_lock_hash, str) or _sha256(lock) != expected_lock_hash:
-        raise RuntimeError(f"GFM runtime lock failed integrity validation: {lock}")
+        raise RuntimeError(f"CPU runtime lock escapes packages/gfm: {lock}") from error
+    if not lock.is_file() or _sha256(lock) != profile.get("requirementsLockSha256"):
+        raise RuntimeError(f"CPU runtime lock failed integrity validation: {lock}")
     arguments: list[str] = [
         "--require-hashes",
         "--only-binary=:all:",
@@ -864,14 +635,11 @@ def install_gfm_environment(
         "--extra-index-url",
         str(profile["torchIndexUrl"]),
     ]
-    for link in profile.get("findLinks", []):
+    for link in profile["findLinks"]:
         arguments.extend(("--find-links", str(link)))
     arguments.extend(("-r", str(lock)))
     _pip_install(python, arguments, cwd=layout.gfm_package, logger=logger)
-    _pip_install(
-        python,
-        ("--no-deps", "--no-build-isolation", str(layout.gfm_package)),
-        cwd=layout.gfm_package,
-        logger=logger,
-    )
+    removed = prune_torch_build_assets(python)
+    if logger is not None:
+        logger(f"Removed {len(removed)} compiler-only Torch assets")
     return python

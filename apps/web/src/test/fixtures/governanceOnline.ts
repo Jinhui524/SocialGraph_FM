@@ -13,7 +13,7 @@ export const GOVERNANCE_OTHER_RUN_ID = `governance-${"3".repeat(32)}`;
 export const onlineHealth = () => ({
   schemaVersion: GOVERNANCE_ONLINE_SCHEMA, serviceIdentity: "0".repeat(64), servingReady: true, onlineForwardReady: true,
   modelVersionId: "socialgraph-fm-global/test", modelVersionHash: GOVERNANCE_HASHES.model, modelStateHash: GOVERNANCE_HASHES.state,
-  device: "cuda", dtype: "float16", loadedAt: "2026-08-18T04:00:00Z", queueDepth: 0, activeRunId: null,
+  device: "cpu", dtype: "float32", loadedAt: "2026-08-18T04:00:00Z", queueDepth: 0, activeRunId: null,
   runtimeRecipeHash: GOVERNANCE_HASHES.recipe, healthHash: GOVERNANCE_HASHES.health,
 });
 export const onlineCapabilities = () => ({

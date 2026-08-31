@@ -229,12 +229,12 @@ export { ORDINARY_PRESENTATION_COPY } from "./presentationCopy";
 type WorkspacePanel = "sessions" | "guide" | "diagnostics" | "datasets" | "rename" | null;
 
 interface LlmDiagnosticResult {
-  readonly state: "idle" | "running" | "success" | "fallback" | "error";
+  readonly state: "idle" | "running" | "success" | "error";
   readonly latencyMs?: number;
   readonly schemaVersion?: string;
   readonly requestId?: string;
   readonly model?: string;
-  readonly source?: "llm" | "deterministic_fallback";
+  readonly source?: "llm";
   readonly task?: string;
   readonly warnings?: readonly string[];
   readonly message?: string;
@@ -298,7 +298,7 @@ const GEOM_GCN_SAMPLE_PATH = "/samples/geom-gcn-toy.zip";
 
 import {
   WelcomeAtlas,
-  researchPromptDispatchRequest,
+  researchPromptSkillRequest,
   researchPromptForText,
   researchPrompts,
   welcomePromptAction,
@@ -306,7 +306,7 @@ import {
 } from "./welcome";
 export {
   WelcomeAtlas,
-  researchPromptDispatchRequest,
+  researchPromptSkillRequest,
   researchPromptForText,
   researchPrompts,
   welcomePromptAction,
@@ -397,6 +397,10 @@ function isGraphConstructionRevision(text: string): boolean {
   return /(?:重新构图|构图规则|字段(?:映射|含义)|起点列|终点列|有向图|无向图|时间格式|重复边|自环)/u.test(text);
 }
 
+function isGovernanceAnalysisRequest(text: string): boolean {
+  return /^(?:请)?(?:开始|运行|执行)(?:当前|一次|本次)?(?:治理)?分析[。！!\s]*$/u.test(text.trim());
+}
+
 function analysisViewKey(state: GraphViewState): string {
   return JSON.stringify({
     graphVersionId: state.graphVersionId,
@@ -485,13 +489,11 @@ export type {
 
 import {
   buildAnalysisResultMarkdown,
-  deterministicGovernanceCompletionReport,
   ensureHumanReviewGuidance,
   resultDescription,
 } from "../governance/reports";
 export {
   buildAnalysisResultMarkdown,
-  deterministicGovernanceCompletionReport,
   ensureHumanReviewGuidance,
   resultDescription,
 } from "../governance/reports";
@@ -707,7 +709,7 @@ export function SocialGraphApp() {
   }, [activeGovernanceTaskId, activeWorkspace]);
   const [governanceServiceState, setGovernanceServiceState] = useState<
     | { readonly state: "checking" }
-    | { readonly state: "ready"; readonly device: "cpu" | "cuda"; readonly modelVersionId: string; readonly modelStateHash: string }
+    | { readonly state: "ready"; readonly device: "cpu"; readonly modelVersionId: string; readonly modelStateHash: string }
     | { readonly state: "model_unavailable" }
     | { readonly state: "unavailable" }
   >({ state: "checking" });
@@ -1771,7 +1773,7 @@ export function SocialGraphApp() {
     description: string,
     parentVersionId?: string,
     reconstructionReason: GraphVersionProvenance["reconstructionReason"] = "construction_revision",
-  ): Promise<{ readonly run: ImportRun; readonly source: "llm" | "deterministic_fallback"; readonly warnings: readonly string[] }> => {
+  ): Promise<{ readonly run: ImportRun; readonly source: "llm"; readonly warnings: readonly string[] }> => {
     const requestEpoch = ++importRequestEpochRef.current;
     const expectedBaseGraphVersionId = pending.baseGraphVersionId ?? null;
     setImportState({
@@ -2339,13 +2341,37 @@ export function SocialGraphApp() {
           governanceChatRequestAbortRef.current?.abort();
           const controller = new AbortController();
           governanceChatRequestAbortRef.current = controller;
-          const promptDispatch = researchPrompt
-            ? researchPromptDispatchRequest(chatGovernanceContext, researchPrompt)
+          if (isGovernanceAnalysisRequest(submittedText)) {
+            const prepared = await governanceSkillsClient.executeSkill(
+              chatGovernanceContext,
+              "run_governance_analysis",
+              { protocol: "global", topK: 100 },
+              controller.signal,
+            );
+            if (controller.signal.aborted
+              || requestEpoch !== governanceChatRequestEpochRef.current
+              || activeSessionIdRef.current !== submittedSessionId) return;
+            const finalEntry: Extract<ChatEntry, { role: "assistant" }> = {
+              id: assistantId,
+              role: "assistant",
+              text: prepared.status === "confirmation_required"
+                ? "治理分析计划已准备完成。请确认后运行 Global 图基础模型；模型结果仅用于安排人工复核顺序。"
+                : "治理分析请求已完成。",
+              timestamp: timeNow(),
+              state: prepared.status === "confirmation_required" ? "warning" : "success",
+              ...(prepared.confirmation ? { confirmation: prepared.confirmation } : {}),
+            };
+            replacePending(finalEntry);
+            await persistChatEntry(finalEntry);
+            return;
+          }
+          const promptRequest = researchPrompt
+            ? researchPromptSkillRequest(chatGovernanceContext, researchPrompt)
             : null;
-          const dispatched = await governanceSkillsClient.dispatchAssistant(
-            promptDispatch?.context ?? chatGovernanceContext,
+          const dispatched = await governanceSkillsClient.executeAssistant(
+            promptRequest?.context ?? chatGovernanceContext,
+            promptRequest?.skill ?? "answer_governance_question",
             submittedText,
-            promptDispatch?.options,
             controller.signal,
           );
           if (controller.signal.aborted
@@ -2356,18 +2382,10 @@ export function SocialGraphApp() {
             role: "assistant",
             text: dispatched.answer,
             timestamp: timeNow(),
-            state: dispatched.status === "blocked" ? "warning" : "success",
-            dispatchIntent: dispatched.intent,
-            ...(dispatched.confirmation ? { confirmation: dispatched.confirmation } : {}),
+            state: "success",
           };
           replacePending(finalEntry);
           await persistChatEntry(finalEntry);
-          if (dispatched.navigation) {
-            window.history.pushState(null, "", hashForWorkspaceRoute("governance"));
-            setGovernanceMounted(true);
-            setActiveWorkspace("governance");
-            setMobilePanel("governance");
-          }
           return;
         }
 
@@ -2407,7 +2425,7 @@ export function SocialGraphApp() {
           throw new Error("当前图谱已变化；旧意图响应已安全丢弃。");
         }
         setLlmDiagnostic({
-          state: normalized.meta.source === "llm" ? "success" : "fallback",
+          state: "success",
           latencyMs: Math.round(performance.now() - startedAt),
           schemaVersion: normalized.meta.schemaVersion,
           requestId: normalized.meta.requestId,
@@ -2416,24 +2434,18 @@ export function SocialGraphApp() {
           ...(normalized.kind === "analysis_request" ? { task: normalized.task } : {}),
           warnings: normalized.meta.warnings,
         });
-        if (normalized.meta.source === "llm") {
-          setIntentServiceStatus({
-            state: "llm",
-            label: "LLM 本次调用成功",
-            ...(normalized.meta.model ? { model: normalized.meta.model } : {}),
-          });
-        } else {
-          setIntentServiceStatus((current) => current.state === "llm"
-            ? { ...current, label: "LLM 已配置 · 最近调用规则降级" }
-            : current);
-        }
+        setIntentServiceStatus({
+          state: "llm",
+          label: "LLM 本次调用成功",
+          ...(normalized.meta.model ? { model: normalized.meta.model } : {}),
+        });
         if (normalized.kind === "chat") {
           const finalEntry: Extract<ChatEntry, { role: "assistant" }> = {
             id: assistantId,
             role: "assistant",
             text: normalized.reply,
             timestamp: timeNow(),
-            state: normalized.meta.source === "llm" ? "success" : "warning",
+            state: "success",
             intentMeta: normalized.meta,
           };
           replacePending(finalEntry);
@@ -2637,19 +2649,13 @@ export function SocialGraphApp() {
         resultHash: result.resultHash,
       });
       const reportContext: GovernanceSkillsContext = Object.freeze({ ...chatGovernanceContext, runId: status.runId });
-      let reportText: string;
-      try {
-        const report = await governanceSkillsClient.dispatchAssistant(
-          reportContext,
-          "请生成本次治理分析摘要，列出高关注账号、风险群组、事实关系、潜在线索和人工复核建议。",
-          { intent: "answer", answerMode: "analysis_summary", narrationMode: "deterministic_only" },
-          controller.signal,
-        );
-        reportText = ensureHumanReviewGuidance(report.answer);
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") throw error;
-        reportText = deterministicGovernanceCompletionReport(result, preview);
-      }
+      const report = await governanceSkillsClient.executeAssistant(
+        reportContext,
+        "generate_global_situation_report",
+        "请生成本次治理分析摘要，列出高关注账号、风险群组、事实关系、潜在线索和人工复核建议。",
+        controller.signal,
+      );
+      const reportText = ensureHumanReviewGuidance(report.answer);
       ensureCurrent();
       const reportEntry: Extract<ChatEntry, { role: "assistant" }> = {
         id: makeId("assistant-governance-report"), role: "assistant", text: reportText,
@@ -2892,7 +2898,7 @@ export function SocialGraphApp() {
         ...(graphVersion ? { graphContext: buildGraphContextSummary(graphVersion) } : {}),
       });
       setLlmDiagnostic({
-        state: normalized.meta.source === "llm" ? "success" : "fallback",
+        state: "success",
         latencyMs: Math.round(performance.now() - startedAt),
         schemaVersion: normalized.meta.schemaVersion,
         requestId: normalized.meta.requestId,
@@ -2901,17 +2907,11 @@ export function SocialGraphApp() {
         ...(normalized.kind === "analysis_request" ? { task: normalized.task } : {}),
         warnings: normalized.meta.warnings,
       });
-      if (normalized.meta.source === "llm") {
-        setIntentServiceStatus({
-          state: "llm",
-          label: "LLM 本次调用成功",
-          ...(normalized.meta.model ? { model: normalized.meta.model } : {}),
-        });
-      } else {
-        setIntentServiceStatus((current) => current.state === "llm"
-          ? { ...current, label: "LLM 已配置 · 最近调用规则降级" }
-          : current);
-      }
+      setIntentServiceStatus({
+        state: "llm",
+        label: "LLM 本次调用成功",
+        ...(normalized.meta.model ? { model: normalized.meta.model } : {}),
+      });
       setWorkspacePanel("diagnostics");
     } catch (error) {
       setLlmDiagnostic({
@@ -3030,7 +3030,7 @@ export function SocialGraphApp() {
         role: "assistant",
         text: "完整链路已通过：示例解析、图谱版本、意图理解、视图命令、本地图算法和高亮覆盖层均已完成。",
         timestamp: timeNow(),
-        state: normalized.meta.source === "llm" ? "success" : "warning",
+        state: "success",
         intent: normalized,
         intentMeta: normalized.meta,
         run,
@@ -3038,7 +3038,7 @@ export function SocialGraphApp() {
       setMessages((current) => [...current, finalEntry]);
       await persistChatEntry(finalEntry, normalized);
       setLlmDiagnostic({
-        state: normalized.meta.source === "llm" ? "success" : "fallback",
+        state: "success",
         latencyMs: Math.round(performance.now() - startedAt),
         schemaVersion: normalized.meta.schemaVersion,
         requestId: normalized.meta.requestId,
@@ -3134,11 +3134,9 @@ export function SocialGraphApp() {
   } as CSSProperties;
   const llmStatusDescription = llmDiagnostic.source === "llm"
     ? "本次 LLM 调用成功"
-    : llmDiagnostic.source === "deterministic_fallback"
-      ? "本次使用规则降级"
-      : intentServiceStatus.state === "llm"
-        ? "LLM 已配置 · 等待本次调用验证"
-        : intentServiceStatus.label;
+    : intentServiceStatus.state === "llm"
+      ? "LLM 已配置 · 等待本次调用验证"
+      : intentServiceStatus.label;
   const governanceStatusDescription = governanceServiceState.state === "checking"
     ? "正在加载在线风险模型"
     : governanceServiceState.state === "ready"

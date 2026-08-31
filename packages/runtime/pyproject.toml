@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "socialgraph-fm-runtime"
 version = "0.1.0"
-description = "Cross-platform local runtime manager for SocialGraph-FM"
-readme = { text = "Cross-platform setup and lifecycle manager for SocialGraph-FM.", content-type = "text/markdown" }
+description = "Single-environment CPU runtime manager for SocialGraph-FM"
+readme = { text = "Windows and Ubuntu CPU setup and lifecycle manager for SocialGraph-FM.", content-type = "text/markdown" }
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 authors = [{ name = "SocialGraph-FM" }]

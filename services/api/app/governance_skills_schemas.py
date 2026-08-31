@@ -15,16 +15,20 @@ from .gfm_governance_schemas import (
     FrozenModel,
 )
 from .governance_skill_runtime.catalog import load_product_skill_catalog
+from .governance_skill_runtime.assistant_catalog import load_assistant_skill_catalog
 
 SKILL_SCHEMA_VERSION: Literal["socialgraph-fm.governance-skills/1.0"] = (
     "socialgraph-fm.governance-skills/1.0"
 )
-ASSISTANT_SCHEMA_VERSION: Literal["socialgraph-fm.governance-assistant/1.0"] = (
-    "socialgraph-fm.governance-assistant/1.0"
-)
-DISPATCH_SCHEMA_VERSION: Literal["socialgraph-fm.governance-assistant-dispatch/1.0"] = (
-    "socialgraph-fm.governance-assistant-dispatch/1.0"
-)
+ASSISTANT_CATALOG_SCHEMA_VERSION: Literal[
+    "socialgraph-fm.product-skills.assistant/1.0"
+] = "socialgraph-fm.product-skills.assistant/1.0"
+ASSISTANT_REQUEST_SCHEMA_VERSION: Literal[
+    "socialgraph-fm.assistant-skill-request/1.0"
+] = "socialgraph-fm.assistant-skill-request/1.0"
+ASSISTANT_RESULT_SCHEMA_VERSION: Literal[
+    "socialgraph-fm.assistant-skill-result/1.0"
+] = "socialgraph-fm.assistant-skill-result/1.0"
 GOVERNANCE_COMMAND_SCHEMA_VERSION: Literal["socialgraph-fm.governance-command/1.0"] = (
     "socialgraph-fm.governance-command/1.0"
 )
@@ -51,27 +55,15 @@ ReadOnlySkillName = Literal[
     "get_model_dataset_cards",
 ]
 ConfirmationAction = Literal["run_governance_analysis", "save_draft_report", "submit_review"]
-DispatchIntent = Literal[
-    "answer",
-    "start_analysis",
-    "open_review",
-    "submit_review",
-    "draft_report",
-]
-AnswerMode = Literal[
-    "overview",
-    "analysis_summary",
-    "coordination_summary",
-    "evidence_requirements",
-    "review_guidance",
-    "method_scope",
-    "knowledge",
-    "case_draft",
-]
-GenerationMode = Literal["llm_assisted", "deterministic_report"]
-NarrationMode = Literal["auto", "deterministic_only"]
-FallbackPhase = Literal["intent", "planning", "skill_execution", "narration"]
 EvidenceSourceKind = Literal["graph", "skill", "knowledge", "case"]
+AssistantSkillName = Literal[
+    "answer_governance_question",
+    "summarize_node_evidence",
+    "generate_global_situation_report",
+    "generate_account_evidence_report",
+    "generate_coordination_report",
+    "generate_case_review_draft",
+]
 InternalCommand = Literal[
     "inspect_graph",
     "run_governance_analysis",
@@ -229,6 +221,7 @@ _PARAM_MODELS: dict[str, type[SkillParams]] = {
 }
 
 _CANONICAL_PRODUCT_SKILLS = load_product_skill_catalog()
+_CANONICAL_ASSISTANT_SKILLS = load_assistant_skill_catalog()
 if tuple(get_args(SkillName)) != _CANONICAL_PRODUCT_SKILLS.names:
     raise RuntimeError("SkillName does not match the canonical SocialGraph-FM Governance catalog")
 if tuple(get_args(ReadOnlySkillName)) != tuple(
@@ -237,6 +230,8 @@ if tuple(get_args(ReadOnlySkillName)) != tuple(
     raise RuntimeError("ReadOnlySkillName does not match the canonical SocialGraph-FM Governance catalog")
 if tuple(_PARAM_MODELS) != _CANONICAL_PRODUCT_SKILLS.names:
     raise RuntimeError("public parameter models do not match the canonical SocialGraph-FM Governance catalog")
+if tuple(get_args(AssistantSkillName)) != _CANONICAL_ASSISTANT_SKILLS.names:
+    raise RuntimeError("AssistantSkillName does not match the canonical Assistant catalog")
 
 
 class SkillExecuteRequest(SkillsModel):
@@ -394,91 +389,15 @@ class SimilarCasesSearchResponse(SkillsModel):
     audit_hash: str = Field(alias="auditHash", pattern=HASH_PATTERN)
 
 
-class AssistantContext(SkillsModel):
-    run_id: str | None = Field(default=None, alias="runId", pattern=RUN_PATTERN)
-    case_id: str | None = Field(default=None, alias="caseId", pattern=CASE_PATTERN)
-    selected_node_ids: tuple[str, ...] = Field(
-        default=(), alias="selectedNodeIds", max_length=25
-    )
-
-
-class AssistantTurnRequest(SkillsModel):
-    schema_version: Literal["socialgraph-fm.governance-assistant/1.0"] = Field(
-        alias="schemaVersion"
-    )
-    graph: GraphIdentity
-    model: ModelIdentity
-    message: str = Field(min_length=1, max_length=2_000)
-    context: AssistantContext = Field(default_factory=AssistantContext)
-
-
 class AssistantSkillTrace(SkillsModel):
     skill: ReadOnlySkillName
     request_hash: str = Field(alias="requestHash", pattern=HASH_PATTERN)
     result_hash: str = Field(alias="resultHash", pattern=HASH_PATTERN)
 
 
-class AssistantTurnResponse(SkillsModel):
-    schema_version: Literal["socialgraph-fm.governance-assistant/1.0"] = Field(
-        alias="schemaVersion"
-    )
-    turn_id: str = Field(alias="turnId", pattern=r"^governance-turn-[0-9a-f]{32}$")
-    answer: str = Field(min_length=1, max_length=8_000)
-    deterministic_fallback: bool = Field(alias="deterministicFallback")
-    skill_calls: tuple[AssistantSkillTrace, ...] = Field(alias="skillCalls", max_length=4)
-    cited_hashes: tuple[str, ...] = Field(alias="citedHashes", max_length=50)
-    audit_hash: str = Field(alias="auditHash", pattern=HASH_PATTERN)
-
-
-class AssistantDispatchTarget(SkillsModel):
+class AssistantSkillTarget(SkillsModel):
     target_type: Literal["node", "relation", "group"] = Field(alias="targetType")
     target_id: str = Field(alias="targetId", min_length=1, max_length=300)
-
-
-class AssistantDispatchContext(SkillsModel):
-    run_id: str | None = Field(default=None, alias="runId", pattern=RUN_PATTERN)
-    case_id: str | None = Field(default=None, alias="caseId", pattern=CASE_PATTERN)
-    case_hash: str | None = Field(default=None, alias="caseHash", pattern=HASH_PATTERN)
-    selected_target: AssistantDispatchTarget | None = Field(default=None, alias="selectedTarget")
-    top_k: int = Field(default=100, alias="topK", ge=1, le=10_000)
-    review_decision: Literal["confirmed", "rejected", "pending"] | None = Field(
-        default=None, alias="reviewDecision"
-    )
-    review_reason: str | None = Field(default=None, alias="reviewReason", min_length=1, max_length=2_000)
-
-    @model_validator(mode="after")
-    def validate_case_hash(self) -> AssistantDispatchContext:
-        if self.case_hash is not None and self.case_id is None:
-            raise ValueError("caseHash requires caseId")
-        return self
-
-
-class AssistantDispatchRequest(SkillsModel):
-    schema_version: Literal["socialgraph-fm.governance-assistant-dispatch/1.0"] = Field(
-        alias="schemaVersion"
-    )
-    graph: GraphIdentity
-    model: ModelIdentity
-    message: str = Field(min_length=1, max_length=2_000)
-    intent: Literal["answer"] | None = None
-    answer_mode: AnswerMode | None = Field(default=None, alias="answerMode")
-    narration_mode: NarrationMode = Field(default="auto", alias="narrationMode")
-    context: AssistantDispatchContext = Field(default_factory=AssistantDispatchContext)
-
-    @model_validator(mode="after")
-    def validate_answer_mode(self) -> AssistantDispatchRequest:
-        if self.answer_mode is not None and self.intent != "answer":
-            raise ValueError("answerMode requires the explicit answer intent")
-        if self.answer_mode == "case_draft" and self.context.case_id is None:
-            raise ValueError("case_draft requires caseId")
-        return self
-
-
-class AssistantDispatchNavigation(SkillsModel):
-    view: Literal["governance_review"]
-    run_id: str = Field(alias="runId", pattern=RUN_PATTERN)
-    case_id: str | None = Field(default=None, alias="caseId", pattern=CASE_PATTERN)
-    target: AssistantDispatchTarget | None = None
 
 
 class AssistantEvidenceRef(SkillsModel):
@@ -487,52 +406,101 @@ class AssistantEvidenceRef(SkillsModel):
     hash: str = Field(pattern=HASH_PATTERN)
 
 
-class AssistantDispatchResponse(SkillsModel):
-    schema_version: Literal["socialgraph-fm.governance-assistant-dispatch/1.0"] = Field(
+class AssistantSkillContext(SkillsModel):
+    run_id: str | None = Field(default=None, alias="runId", pattern=RUN_PATTERN)
+    case_id: str | None = Field(default=None, alias="caseId", pattern=CASE_PATTERN)
+    case_hash: str | None = Field(default=None, alias="caseHash", pattern=HASH_PATTERN)
+    selected_target: AssistantSkillTarget | None = Field(default=None, alias="selectedTarget")
+    top_k: int = Field(default=100, alias="topK", ge=1, le=10_000)
+
+    @model_validator(mode="after")
+    def validate_case_hash(self) -> AssistantSkillContext:
+        if self.case_hash is not None and self.case_id is None:
+            raise ValueError("caseHash requires caseId")
+        return self
+
+
+class AssistantSkillExecuteRequest(SkillsModel):
+    schema_version: Literal["socialgraph-fm.assistant-skill-request/1.0"] = Field(
         alias="schemaVersion"
     )
-    dispatch_id: str = Field(alias="dispatchId", pattern=r"^governance-dispatch-[0-9a-f]{32}$")
-    intent: DispatchIntent
-    answer_mode: AnswerMode | None = Field(default=None, alias="answerMode")
-    status: Literal["completed", "confirmation_required", "blocked"]
-    answer: str = Field(min_length=1, max_length=4_000)
-    result: dict[str, Any] = Field(default_factory=dict)
-    deterministic_fallback: bool = Field(alias="deterministicFallback")
-    generation_mode: GenerationMode | None = Field(default=None, alias="generationMode")
-    fallback_phase: FallbackPhase | None = Field(default=None, alias="fallbackPhase")
-    reason_code: str | None = Field(
-        default=None, alias="reasonCode", pattern=r"^[A-Z][A-Z0-9_]{1,99}$"
+    skill: AssistantSkillName
+    message: str = Field(min_length=1, max_length=2_000)
+    graph: GraphIdentity
+    model: ModelIdentity
+    context: AssistantSkillContext = Field(default_factory=AssistantSkillContext)
+
+    @field_validator("message")
+    @classmethod
+    def normalize_message(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("message must not be blank")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_required_context(self) -> AssistantSkillExecuteRequest:
+        run_required = {
+            "summarize_node_evidence",
+            "generate_global_situation_report",
+            "generate_account_evidence_report",
+            "generate_coordination_report",
+        }
+        node_required = {
+            "summarize_node_evidence",
+            "generate_account_evidence_report",
+        }
+        if self.skill in run_required and self.context.run_id is None:
+            raise ValueError(f"{self.skill} requires context.runId")
+        if self.skill in node_required and (
+            self.context.selected_target is None
+            or self.context.selected_target.target_type != "node"
+        ):
+            raise ValueError(f"{self.skill} requires a selected node target")
+        if self.skill == "generate_case_review_draft" and (
+            self.context.case_id is None or self.context.case_hash is None
+        ):
+            raise ValueError("generate_case_review_draft requires caseId and caseHash")
+        return self
+
+
+class AssistantSkillDescriptor(SkillsModel):
+    name: AssistantSkillName
+    label: str = Field(min_length=1, max_length=100)
+    description: str = Field(min_length=1, max_length=500)
+    ui_location: str = Field(alias="uiLocation", min_length=1, max_length=200)
+    read_only: Literal[True] = Field(alias="readOnly", default=True)
+    confirmation_required: Literal[False] = Field(
+        alias="confirmationRequired", default=False
     )
+    governance_skills: tuple[ReadOnlySkillName, ...] = Field(
+        alias="governanceSkills", min_length=1, max_length=6
+    )
+    parameter_schema: dict[str, Any] = Field(alias="parameterSchema")
+
+
+class AssistantSkillCatalog(SkillsModel):
+    schema_version: Literal["socialgraph-fm.product-skills.assistant/1.0"] = Field(
+        alias="schemaVersion"
+    )
+    items: tuple[AssistantSkillDescriptor, ...] = Field(min_length=6, max_length=6)
+    catalog_hash: str = Field(alias="catalogHash", pattern=HASH_PATTERN)
+
+
+class AssistantSkillExecutionResponse(SkillsModel):
+    schema_version: Literal["socialgraph-fm.assistant-skill-result/1.0"] = Field(
+        alias="schemaVersion"
+    )
+    execution_id: str = Field(alias="executionId", pattern=r"^assistant-exec-[0-9a-f]{32}$")
+    skill: AssistantSkillName
+    answer: str = Field(min_length=1, max_length=8_000)
+    result: dict[str, Any] = Field(default_factory=dict)
+    skill_calls: tuple[AssistantSkillTrace, ...] = Field(alias="skillCalls", max_length=5)
     evidence_refs: tuple[AssistantEvidenceRef, ...] = Field(
         default=(), alias="evidenceRefs", max_length=50
     )
-    confirmation: ConfirmationTicket | None = None
-    navigation: AssistantDispatchNavigation | None = None
-    skill_calls: tuple[AssistantSkillTrace, ...] = Field(alias="skillCalls", max_length=4)
     cited_hashes: tuple[str, ...] = Field(alias="citedHashes", max_length=50)
     audit_hash: str = Field(alias="auditHash", pattern=HASH_PATTERN)
-
-    @model_validator(mode="after")
-    def validate_effect(self) -> AssistantDispatchResponse:
-        if (self.intent == "answer") != (self.answer_mode is not None):
-            raise ValueError("answerMode must match an answer intent")
-        if self.intent != "answer" and self.skill_calls:
-            raise ValueError("skillCalls are only valid for answer intents")
-        expected_action = {
-            "start_analysis": "run_governance_analysis",
-            "submit_review": "submit_review",
-            "draft_report": "save_draft_report",
-        }.get(self.intent)
-        if self.status == "confirmation_required":
-            if self.confirmation is None or self.confirmation.action != expected_action:
-                raise ValueError("confirmation action does not match dispatch intent")
-        elif self.confirmation is not None:
-            raise ValueError("confirmation is only valid for confirmation_required status")
-        if (self.intent == "open_review" and self.status == "completed") != (
-            self.navigation is not None
-        ):
-            raise ValueError("navigation must match a completed open_review intent")
-        return self
 
 
 class GovernanceCommandEnvelope(SkillsModel):

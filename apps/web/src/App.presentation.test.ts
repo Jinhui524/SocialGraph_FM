@@ -12,8 +12,6 @@ import { GraphCameraSnapshotCache, type GraphCameraSnapshotCacheKey } from "./se
 import { adaptationHandoff, targetComparison, targetPolicy, targetPreview, targetResult, targetRun, targetTaskRegistration } from "./test/fixtures/governanceTargetTask";
 import { buildAdaptedReviewPriorityOverlay } from "./services/governanceAdaptation";
 import { governanceImportedGraphVersion } from "./components/GovernanceOnlineWorkspace";
-import { onlineResult, onlineRunPreview } from "./test/fixtures/governanceOnline";
-import type { GovernanceOnlinePreview, GovernanceOnlineResult } from "./types/governanceOnline";
 
 afterEach(cleanup);
 
@@ -34,7 +32,7 @@ function localOverviewRun(): AnalysisRun {
       filters: {},
       meta: {
         schemaVersion: "1.1",
-        source: "deterministic_fallback",
+        source: "llm",
         requestId: "request-local-overview",
         warnings: [],
       },
@@ -133,7 +131,7 @@ describe("App conversation presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: /图谱基本情况/u }));
     expect(onPrompt).toHaveBeenCalledWith(expect.objectContaining({
       text: "请概括当前图谱的账号规模、事实关系数量、关系类型和连通情况",
-      answerMode: "overview",
+      skill: "answer_governance_question",
       contextScope: "graph",
     }));
     expect(container.querySelector("img")).not.toBeInTheDocument();
@@ -141,12 +139,12 @@ describe("App conversation presentation", () => {
     expect(appPresentation.welcomePromptAction(true)).toBe("send");
   });
 
-  it("dispatches each research card with its explicit answer mode and graph scope", () => {
-    expect(appPresentation.researchPrompts.map(({ title, answerMode, contextScope }) => ({ title, answerMode, contextScope })))
+  it("executes each research card through the question Skill with explicit graph scope", () => {
+    expect(appPresentation.researchPrompts.map(({ title, skill, contextScope }) => ({ title, skill, contextScope })))
       .toEqual([
-        { title: "图谱基本情况", answerMode: "overview", contextScope: "graph" },
-        { title: "人工复核流程", answerMode: "review_guidance", contextScope: "workspace" },
-        { title: "证据核对清单", answerMode: "evidence_requirements", contextScope: "workspace" },
+        { title: "图谱基本情况", skill: "answer_governance_question", contextScope: "graph" },
+        { title: "人工复核流程", skill: "answer_governance_question", contextScope: "workspace" },
+        { title: "证据核对清单", skill: "answer_governance_question", contextScope: "workspace" },
       ]);
     const context = {
       graph: { artifactId: "artifact", datasetContentHash: "dataset", graphVersionHash: "graph" },
@@ -156,14 +154,14 @@ describe("App conversation presentation", () => {
       selectedNodeIds: ["account-a"],
       selectedTarget: { kind: "node" as const, targetId: "account-a" },
     };
-    const overview = appPresentation.researchPromptDispatchRequest(context, appPresentation.researchPrompts[0]);
-    expect(overview.options).toEqual({ intent: "answer", answerMode: "overview" });
+    const overview = appPresentation.researchPromptSkillRequest(context, appPresentation.researchPrompts[0]);
+    expect(overview.skill).toBe("answer_governance_question");
     expect(overview.context).toEqual({ graph: context.graph, model: context.model });
-    const evidence = appPresentation.researchPromptDispatchRequest(context, appPresentation.researchPrompts[2]);
-    expect(evidence.options).toEqual({ intent: "answer", answerMode: "evidence_requirements" });
+    const evidence = appPresentation.researchPromptSkillRequest(context, appPresentation.researchPrompts[2]);
+    expect(evidence.skill).toBe("answer_governance_question");
     expect(evidence.context).toBe(context);
-    expect(appPresentation.researchPromptForText(`  ${appPresentation.researchPrompts[1].text}  `)?.answerMode)
-      .toBe("review_guidance");
+    expect(appPresentation.researchPromptForText(`  ${appPresentation.researchPrompts[1].text}  `)?.skill)
+      .toBe("answer_governance_question");
   });
 
   it("keeps the graph summary concise without scope, layer, or clean-quality rows", () => {
@@ -762,14 +760,6 @@ describe("App conversation presentation", () => {
       confirmation: undefined,
       governanceProgress: { stage: "completed", progress: 100 },
     });
-  });
-
-  it("builds an immediate deterministic result if automatic narration is unavailable", () => {
-    const report = appPresentation.deterministicGovernanceCompletionReport(onlineResult() as GovernanceOnlineResult, onlineRunPreview() as GovernanceOnlinePreview);
-    expect(report).toContain("模型分析结果");
-    expect(report).toContain("原模型排名 #1");
-    expect(report).toContain("重点事实关系");
-    expect(report).toContain("人工复核建议");
   });
 
   it("never presents the backend terminal state as 100% before the report is ready", () => {

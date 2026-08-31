@@ -9,6 +9,18 @@ import pytest
 from app import __main__ as launcher
 
 
+@pytest.fixture(autouse=True)
+def _configured_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_API_BASE", "https://provider.example/v1")
+    monkeypatch.setenv("LLM_MODEL", "model-a")
+    monkeypatch.setenv("LLM_API_KEY", "secret-key")
+
+    async def verified() -> None:
+        return None
+
+    monkeypatch.setattr(launcher, "verify_provider", verified)
+
+
 def test_supported_launcher_binds_loopback_only(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
@@ -20,7 +32,7 @@ def test_supported_launcher_binds_loopback_only(monkeypatch: pytest.MonkeyPatch)
 
     assert captured["app"] == "app.main:app"
     assert captured["host"] == "127.0.0.1"
-    assert captured["port"] == 8000
+    assert captured["port"] == 5173
     assert captured["reload"] is False
 
 
@@ -56,6 +68,14 @@ def test_supported_launcher_uses_the_managed_api_port(monkeypatch: pytest.Monkey
     launcher.main()
 
     assert captured["port"] == 8123
+
+
+def test_supported_launcher_rejects_missing_llm_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LLM_API_KEY")
+    with pytest.raises(RuntimeError, match="LLM_API_BASE"):
+        launcher.main()
 
 
 def test_runtime_identity_root_must_match_the_managed_environment(

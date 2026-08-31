@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { evidencePayload, onlineFinding } from "../test/fixtures/governanceOnline";
-import { GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA, type GovernanceSkillsClientLike, type GovernanceSkillsContext } from "../types/governanceSkills";
+import { ASSISTANT_SKILL_RESULT_SCHEMA, type GovernanceSkillsClientLike, type GovernanceSkillsContext } from "../types/governanceSkills";
 import type { GovernanceOnlineEvidence, GovernanceOnlineFinding } from "../types/governanceOnline";
 import { EVIDENCE_SUMMARY_TIMEOUT_MS, EvidenceDossier } from "./EvidenceDossier";
 
@@ -21,29 +21,21 @@ const context: GovernanceSkillsContext = {
 
 function response(answer = "### 关注原因\n\n当前账号需要继续人工核验。") {
   return {
-    schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-    dispatchId: `governance-dispatch-${"3".repeat(32)}`,
-    intent: "answer" as const,
-    answerMode: "evidence_requirements" as const,
-    status: "completed" as const,
+    schemaVersion: ASSISTANT_SKILL_RESULT_SCHEMA,
+    executionId: `assistant-exec-${"3".repeat(32)}`,
+    skill: "summarize_node_evidence" as const,
     answer,
     result: {},
-    deterministicFallback: false,
-    generationMode: "llm_assisted" as const,
-    fallbackPhase: null,
-    reasonCode: null,
     evidenceRefs: [],
-    confirmation: null,
-    navigation: null,
     skillCalls: [],
     citedHashes: [],
     auditHash: "4".repeat(64),
   };
 }
 
-function summaryClient(implementation?: GovernanceSkillsClientLike["dispatchAssistant"]): GovernanceSkillsClientLike {
+function summaryClient(implementation?: GovernanceSkillsClientLike["executeAssistant"]): GovernanceSkillsClientLike {
   return {
-    dispatchAssistant: implementation ?? vi.fn(async () => response()),
+    executeAssistant: implementation ?? vi.fn(async () => response()),
   } as unknown as GovernanceSkillsClientLike;
 }
 
@@ -98,21 +90,21 @@ describe("EvidenceDossier", () => {
   });
 
   it("generates a node summary only after an explicit click and reuses its session cache", async () => {
-    const dispatchAssistant = vi.fn(async () => response("### 关注原因\n\n这是受事实约束的证据研判。"));
-    const api = summaryClient(dispatchAssistant);
+    const executeAssistant = vi.fn(async () => response("### 关注原因\n\n这是受事实约束的证据研判。"));
+    const api = summaryClient(executeAssistant);
     const evidence = { ...evidencePayload(), evidenceHash: "5".repeat(64) } as GovernanceOnlineEvidence;
     const rendered = render(<EvidenceDossier {...props({ summaryClient: api, evidence: { state: "ready", value: evidence } })} />);
-    expect(dispatchAssistant).not.toHaveBeenCalled();
+    expect(executeAssistant).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "生成证据研判摘要" }));
     expect(await screen.findByText("这是受事实约束的证据研判。")).toBeInTheDocument();
-    expect(dispatchAssistant).toHaveBeenCalledWith(
+    expect(executeAssistant).toHaveBeenCalledWith(
       context,
+      "summarize_node_evidence",
       expect.stringContaining("300至600个中文字符"),
-      { intent: "answer", answerMode: "evidence_requirements" },
       expect.any(AbortSignal),
     );
-    const submittedPrompt = (dispatchAssistant.mock.calls as unknown as readonly (readonly unknown[])[])[0]?.[1];
+    const submittedPrompt = (executeAssistant.mock.calls as unknown as readonly (readonly unknown[])[])[0]?.[2];
     expect(submittedPrompt).toBeTypeOf("string");
     if (typeof submittedPrompt !== "string") throw new Error("summary prompt was not captured");
     expect(submittedPrompt.length).toBeLessThanOrEqual(2_000);
@@ -121,18 +113,18 @@ describe("EvidenceDossier", () => {
     rendered.rerender(<EvidenceDossier {...props({ open: false, summaryClient: api, evidence: { state: "ready", value: evidence } })} />);
     rendered.rerender(<EvidenceDossier {...props({ summaryClient: api, evidence: { state: "ready", value: evidence } })} />);
     expect(await screen.findByText("这是受事实约束的证据研判。")).toBeInTheDocument();
-    expect(dispatchAssistant).toHaveBeenCalledTimes(1);
+    expect(executeAssistant).toHaveBeenCalledTimes(1);
   });
 
   it("cancels an old summary when the selected target changes", async () => {
     let resolve!: (value: ReturnType<typeof response>) => void;
     let signal: AbortSignal | undefined;
     const pending = new Promise<ReturnType<typeof response>>((resolvePromise) => { resolve = resolvePromise; });
-    const dispatchAssistant = vi.fn((_context, _message, _options, requestSignal?: AbortSignal) => {
+    const executeAssistant = vi.fn((_context, _skill, _message, requestSignal?: AbortSignal) => {
       signal = requestSignal;
       return pending;
     });
-    const api = summaryClient(dispatchAssistant);
+    const api = summaryClient(executeAssistant);
     const firstEvidence = { ...evidencePayload(), evidenceHash: "6".repeat(64) } as GovernanceOnlineEvidence;
     const secondEvidence = { ...evidencePayload(), evidenceHash: "7".repeat(64), node: onlineFinding("n2", 2, 0.58) } as GovernanceOnlineEvidence;
     const rendered = render(<EvidenceDossier {...props({ summaryClient: api, evidence: { state: "ready", value: firstEvidence } })} />);
@@ -154,7 +146,7 @@ describe("EvidenceDossier", () => {
   it("resets an aborted summary when the same dossier is closed and reopened", async () => {
     let signal: AbortSignal | undefined;
     const pending = new Promise<ReturnType<typeof response>>(() => undefined);
-    const api = summaryClient(vi.fn((_context, _message, _options, requestSignal?: AbortSignal) => {
+    const api = summaryClient(vi.fn((_context, _skill, _message, requestSignal?: AbortSignal) => {
       signal = requestSignal;
       return pending;
     }));

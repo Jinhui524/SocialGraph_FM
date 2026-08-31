@@ -17,7 +17,7 @@ import {
   onlineRunPreview,
 } from "../src/test/fixtures/governanceOnline";
 import {
-  GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
+  ASSISTANT_SKILL_RESULT_SCHEMA,
   GOVERNANCE_PUBLIC_SKILLS,
   GOVERNANCE_SKILLS_SCHEMA,
 } from "../src/types/governanceSkills";
@@ -141,51 +141,42 @@ async function mockGovernance(
       })),
       catalogHash: "d".repeat(64),
     });
-    if (request.method() === "POST" && path.endsWith("/assistant/dispatch")) {
+    if (request.method() === "POST" && path.endsWith("/skills/execute")) {
       const payload = request.postDataJSON() as {
-        readonly intent?: string;
-        readonly answerMode?: string;
-        readonly narrationMode?: string;
-        readonly context?: { readonly runId?: string };
+        readonly skill?: string;
       };
-      if (payload.intent !== "answer" && !payload.context?.runId) return json(route, {
-        schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-        dispatchId: `governance-dispatch-${"4".repeat(32)}`,
-        intent: "start_analysis",
-        answerMode: null,
+      if (payload.skill !== "run_governance_analysis") return route.abort("failed");
+      return json(route, {
+        schemaVersion: GOVERNANCE_SKILLS_SCHEMA,
+        executionId: `governance-exec-${"4".repeat(32)}`,
+        skill: "run_governance_analysis",
         status: "confirmation_required",
-        answer: "请确认开始分析。",
         result: { plan: { topK: 100 } },
-        deterministicFallback: true,
         confirmation: {
           token: `governance-confirm-${"5".repeat(64)}`,
           action: "run_governance_analysis",
           requestDigest: "6".repeat(64),
           expiresAt: "2026-08-23T12:00:00Z",
         },
-        navigation: null,
-        skillCalls: [],
-        citedHashes: [],
+        provenance: { inputHash: "7".repeat(64) },
         auditHash: "8".repeat(64),
       });
-      if (payload.context?.runId && payload.narrationMode === "deterministic_only") {
+    }
+    if (request.method() === "POST" && path.endsWith("/assistant/execute")) {
+      const payload = request.postDataJSON() as {
+        readonly skill?: string;
+        readonly context?: { readonly runId?: string };
+      };
+      if (payload.skill === "generate_global_situation_report") {
         await options.automaticReportGate;
       }
       return json(route, {
-        schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-        dispatchId: `governance-dispatch-${"7".repeat(32)}`,
-        intent: "answer",
-        answerMode: payload.answerMode ?? "overview",
-        status: "completed",
+        schemaVersion: ASSISTANT_SKILL_RESULT_SCHEMA,
+        executionId: `assistant-exec-${"7".repeat(32)}`,
+        skill: payload.skill,
         answer: "## 研判结论\n当前结果已按事实关系与模型排序整理。\n\n## 人工复核建议\n优先核对高关注账号及其一跳关系。",
         result: {},
-        deterministicFallback: true,
-        generationMode: "deterministic_report",
-        fallbackPhase: null,
-        reasonCode: null,
         evidenceRefs: [{ label: "当前分析结果", sourceKind: "skill", hash: GOVERNANCE_HASHES.result }],
-        confirmation: null,
-        navigation: null,
         skillCalls: [{ skill: "inspect_graph", requestHash: GOVERNANCE_HASHES.request, resultHash: GOVERNANCE_HASHES.result }],
         citedHashes: [GOVERNANCE_HASHES.result],
         auditHash: "8".repeat(64),
@@ -403,7 +394,7 @@ async function openGovernancePackage(
   return { graph, previewRequests, requestCounts, workspace };
 }
 
-test("automatic completion holds at 95 until its deterministic report is ready", async ({ page }) => {
+test("automatic completion holds at 95 until its LLM report is ready", async ({ page }) => {
   test.setTimeout(60_000);
   let releaseReport!: () => void;
   const reportGate = new Promise<void>((resolve) => { releaseReport = resolve; });
@@ -422,14 +413,14 @@ test("automatic completion holds at 95 until its deterministic report is ready",
   await page.getByLabel("研究问题", { exact: true }).fill("开始分析");
   await page.getByRole("button", { name: "发送研究问题", exact: true }).click();
   const automaticReportRequest = page.waitForRequest((request) => request.method() === "POST"
-    && new URL(request.url()).pathname.endsWith("/assistant/dispatch")
-    && (request.postData() ?? "").includes('"narrationMode":"deterministic_only"'));
+    && new URL(request.url()).pathname.endsWith("/assistant/execute")
+    && (request.postData() ?? "").includes('"skill":"generate_global_situation_report"'));
   await page.getByRole("button", { name: "确认开始分析", exact: true }).click();
 
   const progress = page.getByRole("region", { name: "治理分析进度" });
   await expect(progress.getByRole("progressbar", { name: "治理分析完成 95%" })).toBeVisible();
   await expect(progress).toContainText("正在整理分析结论");
-  expect((await automaticReportRequest).postDataJSON()).toMatchObject({ answerMode: "analysis_summary", narrationMode: "deterministic_only" });
+  expect((await automaticReportRequest).postDataJSON()).toMatchObject({ skill: "generate_global_situation_report" });
   await expect(page.getByRole("heading", { name: "研判结论", exact: true })).toHaveCount(0);
   await page.evaluate(() => {
     const states: Array<{ progress: string | null; report: boolean }> = [];
@@ -542,7 +533,7 @@ test("assistant composer remains complete while task and report content scroll i
   }
 });
 
-test("research task cards dispatch explicit answer modes after a governed graph is ready", async ({ page }) => {
+test("research task cards execute the explicit question Skill after a governed graph is ready", async ({ page }) => {
   await openGovernancePackage(page);
   await page.getByRole("button", { name: "对话研究", exact: true }).click();
   await page.getByRole("button", { name: "查看开始页", exact: true }).click();
@@ -560,9 +551,9 @@ test("research task cards dispatch explicit answer modes after a governed graph 
   }
 
   const tasks = [
-    { title: "图谱基本情况", answerMode: "overview", carriesRun: false },
-    { title: "人工复核流程", answerMode: "review_guidance", carriesRun: true },
-    { title: "证据核对清单", answerMode: "evidence_requirements", carriesRun: true },
+    { title: "图谱基本情况", skill: "answer_governance_question", carriesRun: false },
+    { title: "人工复核流程", skill: "answer_governance_question", carriesRun: true },
+    { title: "证据核对清单", skill: "answer_governance_question", carriesRun: true },
   ] as const;
 
   for (const [taskIndex, task] of tasks.entries()) {
@@ -570,18 +561,16 @@ test("research task cards dispatch explicit answer modes after a governed graph 
     const responsePromise = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return response.request().method() === "POST"
-        && url.pathname.endsWith("/api/v2/gfm/governance/assistant/dispatch")
-        && (response.request().postData() ?? "").includes(`\"answerMode\":\"${task.answerMode}\"`);
+        && url.pathname.endsWith("/api/v2/gfm/governance/assistant/execute")
+        && (response.request().postData() ?? "").includes(`\"skill\":\"${task.skill}\"`);
     });
     await page.getByRole("button", { name: new RegExp(task.title, "u") }).click();
     const response = await responsePromise;
     const payload = response.request().postDataJSON() as {
-      readonly intent?: string;
-      readonly answerMode?: string;
+      readonly skill?: string;
       readonly context?: { readonly runId?: string };
     };
-    expect(payload.intent).toBe("answer");
-    expect(payload.answerMode).toBe(task.answerMode);
+    expect(payload.skill).toBe(task.skill);
     expect(Boolean(payload.context?.runId)).toBe(task.carriesRun);
     await expect(page.locator(".assistant-card.is-success").last()).toBeVisible();
   }

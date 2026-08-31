@@ -13,36 +13,31 @@ from .conftest import SequenceProvider
 
 
 @pytest.mark.anyio
-async def test_provider_failure_falls_back_without_exposing_details() -> None:
+async def test_provider_failure_is_propagated_without_a_fallback_response() -> None:
     provider = SequenceProvider([ProviderFailure("LLM_RATE_LIMITED", "secret upstream detail")])
-    result = await IntentNormalizerService(provider).normalize(
-        NormalizeIntentRequest(text="找出关键成员"),
-        request_id="test-id",
-    )
-    body = result.model_dump(by_alias=True)
-    assert body["kind"] == "analysis_request"
-    assert body["task"] == "centrality"
-    assert body["meta"]["warnings"] == ["LLM_RATE_LIMITED"]
-    assert "secret" not in json.dumps(body, ensure_ascii=False)
+    with pytest.raises(ProviderFailure) as failed:
+        await IntentNormalizerService(provider).normalize(
+            NormalizeIntentRequest(text="找出关键成员"),
+            request_id="test-id",
+        )
+    assert failed.value.code == "LLM_RATE_LIMITED"
 
 
 @pytest.mark.anyio
-async def test_two_invalid_model_outputs_fall_back_after_one_repair() -> None:
+async def test_two_invalid_model_outputs_fail_after_one_repair() -> None:
     provider = SequenceProvider(
         [
             {"kind": "analysis_request", "task": "invalid"},
             {"kind": "analysis_request", "task": "still-invalid"},
         ]
     )
-    result = await IntentNormalizerService(provider).normalize(
-        NormalizeIntentRequest(text="分析社区结构"),
-        request_id="repair-failed",
-    )
-    body = result.model_dump(by_alias=True)
+    with pytest.raises(ProviderFailure) as failed:
+        await IntentNormalizerService(provider).normalize(
+            NormalizeIntentRequest(text="分析社区结构"),
+            request_id="repair-failed",
+        )
     assert len(provider.calls) == 2
-    assert body["task"] == "community"
-    assert body["meta"]["source"] == "deterministic_fallback"
-    assert body["meta"]["warnings"] == ["LLM_INVALID_RESPONSE"]
+    assert failed.value.code == "LLM_INVALID_RESPONSE"
 
 
 @pytest.mark.anyio
@@ -94,15 +89,28 @@ async def test_invalid_json_provider_failure_gets_one_repair_attempt() -> None:
         ),
     ],
 )
-async def test_deterministic_fallback_builds_bounded_view_commands(
+async def test_explicit_commands_are_grounded_after_llm_normalization(
     text: str,
     expected_task: str,
     expected_view: dict[str, object],
     expected_targets: list[str],
 ) -> None:
-    result = await IntentNormalizerService().normalize(
+    provider = SequenceProvider(
+        [
+            {
+                "kind": "analysis_request",
+                "normalizedText": text,
+                "task": expected_task,
+                "targets": [],
+                "confidence": 0.9,
+                "filters": {},
+                "view": None,
+            }
+        ]
+    )
+    result = await IntentNormalizerService(provider).normalize(
         NormalizeIntentRequest(text=text),
-        request_id="fallback-view",
+        request_id="grounded-view",
     )
     body = result.model_dump(by_alias=True)
     assert body["task"] == expected_task
@@ -164,17 +172,14 @@ async def test_malformed_view_gets_one_repair_then_schema_11_response() -> None:
 
 
 @pytest.mark.anyio
-async def test_fallback_eval_accuracy_is_at_least_90_percent() -> None:
+async def test_eval_inputs_require_a_configured_provider() -> None:
     fixture = Path(__file__).parent / "fixtures" / "intent_eval_cases.json"
     cases = json.loads(fixture.read_text(encoding="utf-8"))
     service = IntentNormalizerService()
-    correct = 0
-    for index, case in enumerate(cases):
-        result = await service.normalize(
-            NormalizeIntentRequest(text=case["text"]),
-            request_id=f"eval-{index}",
+    assert cases
+    with pytest.raises(ProviderFailure) as failed:
+        await service.normalize(
+            NormalizeIntentRequest(text=cases[0]["text"]),
+            request_id="eval-no-provider",
         )
-        actual = result.kind if result.kind == "chat" else result.task
-        if actual == case["expected"]:
-            correct += 1
-    assert correct / len(cases) >= 0.90
+    assert failed.value.code == "LLM_NOT_CONFIGURED"

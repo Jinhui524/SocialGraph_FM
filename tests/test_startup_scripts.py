@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -11,535 +10,173 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PROJECT_ROOT / "scripts"
+PUBLIC_COMMANDS = ("onboard", "configure-llm", "start", "stop", "doctor")
 
 
 def _read(relative: str) -> str:
     return (PROJECT_ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_public_startup_entrypoints_and_legacy_wrappers_exist() -> None:
-    for name in (
-        "socialgraph.py",
-        "onboard.ps1",
-        "setup.ps1",
-        "dev.ps1",
-        "start.ps1",
-        "stop.ps1",
-        "doctor.ps1",
-        "configure-llm.ps1",
-        "install-model.ps1",
-        "bootstrap-all.ps1",
-        "dev-all.ps1",
-        "start-all.ps1",
-        "stop-all.ps1",
-    ):
-        assert (SCRIPTS / name).is_file(), name
-
-
-def _cli_help(command: str) -> str:
-    completed = subprocess.run(
-        [sys.executable, str(SCRIPTS / "socialgraph.py"), command, "--help"],
+def _run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "socialgraph.py"), *arguments],
         cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    return completed.stdout
-
-
-def test_python_cli_exposes_the_stable_cross_platform_contract() -> None:
-    setup = _cli_help("setup")
-    for option in (
-        "--profile",
-        "--wheel-profile",
-        "--device-policy",
-        "--env-mode",
-        "--api-python",
-        "--gfm-python",
-        "--bootstrap-python",
-        "--skip-api",
-        "--skip-web",
-        "--gfm-text",
-    ):
-        assert option in setup
-    assert "--gfm-text-profile" not in setup
-
-    for command in ("dev", "start"):
-        lifecycle = _cli_help(command)
-        for option in (
-            "--llm-mode",
-            "--no-llm-prompt",
-            "--reconfigure-llm",
-            "--test-llm",
-        ):
-            assert option in lifecycle
-
-    configure = _cli_help("configure-llm")
-    for option in (
-        "--preset",
-        "--api-base",
-        "--model",
-        "--api-mode",
-        "--protocol",
-        "--auth-scheme",
-        "--anthropic-version",
-        "--timeout-seconds",
-        "--api-key-stdin",
-        "--allow-insecure-loopback",
-        "--test-llm",
-        "--skip-llm-test",
-    ):
-        assert option in configure
-
-    onboard = _cli_help("onboard")
-    for option in (
-        "--wheel-profile",
-        "--device-policy",
-        "--env-mode",
-        "--api-python",
-        "--gfm-python",
-        "--bootstrap-python",
-        "--preset",
-        "--api-base",
-        "--model",
-        "--api-mode",
-        "--protocol",
-        "--auth-scheme",
-        "--anthropic-version",
-        "--timeout-seconds",
-        "--api-key-stdin",
-        "--allow-insecure-loopback",
-    ):
-        assert option in onboard
-
-    exported = _cli_help("export-github")
-    assert "--repository" in exported
-    assert "--zip" in exported
-
-
-def test_setup_without_profile_fails_closed_when_stdin_is_not_a_tty() -> None:
-    completed = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPTS / "socialgraph.py"),
-            "setup",
-            "--skip-api",
-            "--skip-web",
-        ],
-        cwd=PROJECT_ROOT,
-        input="",
         text=True,
         capture_output=True,
         check=False,
     )
-    assert completed.returncode == 2
-    assert completed.stdout == ""
-    assert "explicit --wheel-profile cpu|cuda|ID" in completed.stderr
 
 
-def test_setup_tty_profile_prompt_defaults_to_cpu() -> None:
-    source = """
-from socialgraph_fm_runtime import cli
-class InteractiveInput:
-    def isatty(self):
-        return True
-    def readline(self):
-        return "\\n"
-cli.sys.stdin = InteractiveInput()
-print(cli._select_setup_profile(None))
-"""
-    environment = dict(os.environ)
-    environment["PYTHONPATH"] = str(PROJECT_ROOT / "packages" / "runtime" / "src")
-    completed = subprocess.run(
-        [sys.executable, "-c", source],
-        cwd=PROJECT_ROOT,
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    assert completed.stdout.strip() == "cpu"
-    assert "CPU wheel (default)" in completed.stderr
-
-    doctor = _cli_help("doctor")
-    assert "--test-llm" in doctor
-    assert "--full" in doctor
-    assert "--json" in doctor
-    assert "usage:" in _cli_help("stop")
-
-
-def test_powershell_wrappers_forward_values_and_keep_the_key_off_argv(tmp_path: Path) -> None:
-    powershell = shutil.which("pwsh") or shutil.which("powershell")
-    if powershell is None:
-        pytest.skip("PowerShell is unavailable on this platform")
-
-    wrapper_root = tmp_path / "wrapper fixture"
-    wrapper_root.mkdir()
-    (wrapper_root / "lib").mkdir()
-    for name in ("setup.ps1", "configure-llm.ps1"):
-        shutil.copy2(SCRIPTS / name, wrapper_root / name)
-    shutil.copy2(SCRIPTS / "lib" / "PythonLauncher.ps1", wrapper_root / "lib")
-    (wrapper_root / "socialgraph.py").write_text(
-        """from __future__ import annotations
-import json
-import os
-import sys
-from pathlib import Path
-payload = {\"argv\": sys.argv[1:], \"stdin\": \"\"}
-if \"--api-key-stdin\" in sys.argv:
-    payload[\"stdin\"] = sys.stdin.readline()
-Path(os.environ[\"SOCIALGRAPH_WRAPPER_CAPTURE\"]).write_text(
-    json.dumps(payload), encoding=\"utf-8\"
-)
-""",
-        encoding="utf-8",
-    )
-
-    capture = tmp_path / "capture.json"
-    environment = dict(os.environ)
-    environment["SOCIALGRAPH_WRAPPER_CAPTURE"] = str(capture)
-    subprocess.run(
-        [
-            powershell,
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(wrapper_root / "setup.ps1"),
-            "-Profile",
-            "Cpu",
-            "-EnvMode",
-            "Reuse",
-            "-ApiPython",
-            sys.executable,
-            "-GfmPython",
-            sys.executable,
-            "-SkipWeb",
-        ],
-        cwd=PROJECT_ROOT,
-        env=environment,
-        check=True,
-    )
-    setup = json.loads(capture.read_text(encoding="utf-8"))
-    assert setup["argv"] == [
-        "setup",
-        "--profile",
-        "cpu",
-        "--device-policy",
-        "auto",
-        "--env-mode",
-        "reuse",
-        "--api-python",
-        sys.executable,
-        "--gfm-python",
-        sys.executable,
-        "--skip-web",
-    ]
-
-    configure_path = str(wrapper_root / "configure-llm.ps1").replace("'", "''")
-    command = (
-        "$key=ConvertTo-SecureString 'wrapper-placeholder-key' -AsPlainText -Force; "
-        f"& '{configure_path}' -Preset custom -ApiBase https://provider.example/v1 "
-        "-Model wrapper-model -ApiMode responses -TimeoutSeconds 12 -ApiKey $key -SkipLlmTest"
-    )
-    subprocess.run(
-        [powershell, "-NoProfile", "-Command", command],
-        cwd=PROJECT_ROOT,
-        env=environment,
-        check=True,
-    )
-    configured = json.loads(capture.read_text(encoding="utf-8"))
-    assert configured["stdin"].lstrip("\ufeff").rstrip("\r\n") == "wrapper-placeholder-key"
-    assert "wrapper-placeholder-key" not in configured["argv"]
-    assert configured["argv"] == [
-        "configure-llm",
-        "--preset",
-        "custom",
-        "--api-base",
-        "https://provider.example/v1",
-        "--model",
-        "wrapper-model",
-        "--api-mode",
-        "responses",
-        "--timeout-seconds",
-        "12",
-        "--skip-llm-test",
-        "--api-key-stdin",
-    ]
-
-
-def test_layout_uses_the_public_repository_structure() -> None:
-    layout = _read("scripts/lib/Layout.ps1")
-    assert 'Join-Path $root "apps\\web"' in layout
-    assert 'Join-Path $root "services\\api"' in layout
-    assert 'Join-Path $root "packages\\gfm"' in layout
-    assert "platform\\core" not in layout
-    assert '"Offline", "Cpu", "Cuda"' in layout
-
-
-def test_unified_operations_is_a_thin_compatibility_facade() -> None:
-    facade = _read("scripts/lib/UnifiedOperations.ps1")
-    legacy = _read("scripts/lib/LegacyOperations.ps1")
-    assert len(facade.splitlines()) < 15
-    assert '"LegacyOperations.ps1"' in facade
-    for module in (
-        "Layout.ps1",
-        "PrivateConfiguration.ps1",
-        "ModelRuntime.ps1",
-        "RuntimeBundle.ps1",
-        "ProcessManager.ps1",
-        "Verification.ps1",
-    ):
-        assert f'"{module}"' in legacy
-
-
-def test_setup_wrapper_preserves_profiles_and_environment_selection() -> None:
-    setup = _read("scripts/setup.ps1")
-    assert "[string]$Profile," in setup
-    assert '[string]$Profile = "Offline"' not in setup
-    assert '$PSBoundParameters.ContainsKey("Profile")' in setup
-    assert '"Auto", "Reuse", "Managed"' in setup
-    assert '[string]$EnvMode = "Auto"' in setup
-    assert '"socialgraph.py"' in setup
-    assert '"setup"' in setup
-    assert '"--profile"' in setup
-    assert '"--wheel-profile"' in setup
-    assert '"--device-policy"' in setup
-    assert '"--env-mode"' in setup
-    assert '"--bootstrap-python"' in setup
-    assert '"--api-python"' in setup
-    assert '"--gfm-python"' in setup
-    assert '"--skip-api"' in setup
-    assert '"--skip-web"' in setup
-    assert '"--gfm-text"' in setup
-    assert "UnifiedOperations.ps1" not in setup
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "configure-llm.ps1",
-        "dev-all.ps1",
+def test_public_runtime_has_one_python_entrypoint_and_one_windows_wrapper() -> None:
+    assert (SCRIPTS / "socialgraph.py").is_file()
+    assert (SCRIPTS / "socialgraph.ps1").is_file()
+    for removed in (
+        "setup.ps1",
+        "onboard.ps1",
+        "start.ps1",
+        "stop.ps1",
         "dev.ps1",
         "doctor.ps1",
+        "configure-llm.ps1",
+        "bootstrap-all.ps1",
+        "dev-all.ps1",
         "start-all.ps1",
-        "start.ps1",
         "stop-all.ps1",
-        "stop.ps1",
-        "onboard.ps1",
-    ],
-)
-def test_powershell_wrappers_accept_an_explicit_bootstrap_python(name: str) -> None:
-    script = _read(f"scripts/{name}")
-    assert "[string]$BootstrapPython" in script
-    assert "Resolve-SocialGraphPythonLauncher -BootstrapPython $BootstrapPython" in script
-
-
-@pytest.mark.parametrize("name", ["dev.ps1", "start.ps1"])
-def test_startup_modes_never_prompt_when_no_prompt_is_requested(name: str) -> None:
-    script = _read(f"scripts/{name}")
-    assert '"Optional", "Required", "Disabled"' in script
-    assert "[switch]$NoLlmPrompt" in script
-    assert "[switch]$ReconfigureLlm" in script
-    assert "[switch]$TestLlm" in script
-    assert '"socialgraph.py"' in script
-    assert f'"{name.removesuffix(".ps1")}"' in script
-    assert '"--llm-mode"' in script
-    assert '"--no-llm-prompt"' in script
-    assert '"--reconfigure-llm"' in script
-    assert '"--test-llm"' in script
-    assert "Resolve-LlmStartup" not in script
-    resolver = _read("scripts/lib/PrivateConfiguration.ps1")
-    assert "[C]onfigure now / continue [O]ffline / [Q]uit" in resolver
-
-
-def test_private_configuration_is_atomic_and_url_validation_is_fail_closed() -> None:
-    private = _read("scripts/lib/PrivateConfiguration.ps1")
-    assert "[IO.File]::Replace" in private
-    assert "[IO.File]::Move" in private
-    assert "Protect-UnifiedConfigDirectory" in private
-    assert "Assert-PrivateConfigurationFile" in private
-    assert "AllowInsecureLoopback" in private
-    assert "embedded credentials" in private
-    assert "query string or fragment" in private
-    assert "Remote API Base URLs must use HTTPS" in private
-
-
-def test_llm_wrapper_maps_existing_options_without_exposing_key_in_argv() -> None:
-    configure = _read("scripts/configure-llm.ps1")
-    assert '"socialgraph.py"' in configure
-    assert '"configure-llm"' in configure
-    for option in (
-        "--preset",
-        "--api-base",
-        "--model",
-        "--api-mode",
-        "--auth-scheme",
-        "--anthropic-version",
-        "--timeout-seconds",
-        "--allow-insecure-loopback",
-        "--test-llm",
-        "--skip-llm-test",
-        "--api-key-stdin",
+        "verify-all.ps1",
+        "run-python-cli.mjs",
     ):
-        assert f'"{option}"' in configure
-    assert "SecureStringToBSTR" in configure
-    assert "ZeroFreeBSTR" in configure
-    assert '$arguments += @("--api-key"' not in configure
-    assert (SCRIPTS / "tests" / "mock_llm_provider.py").is_file()
+        assert not (SCRIPTS / removed).exists(), removed
 
 
-def test_onboard_wrapper_maps_noninteractive_options_without_key_in_argv() -> None:
-    onboard = _read("scripts/onboard.ps1")
-    assert '"onboard"' in onboard
-    for option in (
-        "--wheel-profile",
-        "--device-policy",
-        "--env-mode",
-        "--preset",
-        "--api-base",
-        "--model",
-        "--api-mode",
-        "--auth-scheme",
-        "--anthropic-version",
-        "--timeout-seconds",
-        "--api-key-stdin",
-        "--allow-insecure-loopback",
-    ):
-        assert f'"{option}"' in onboard
-    assert '"--api-key"' not in onboard
+def test_cli_exposes_only_the_five_public_commands() -> None:
+    completed = _run_cli("--help")
+    assert completed.returncode == 0, completed.stderr
+    for command in PUBLIC_COMMANDS:
+        assert command in completed.stdout
+    for removed in ("setup", "dev", "export-github"):
+        assert f"    {removed} " not in completed.stdout
 
 
-def test_all_legacy_all_entrypoints_delegate_to_python_cli() -> None:
-    expected = {
-        "bootstrap-all.ps1": "setup",
-        "dev-all.ps1": "dev",
-        "start-all.ps1": "start",
-        "stop-all.ps1": "stop",
+@pytest.mark.parametrize("command", PUBLIC_COMMANDS)
+def test_every_public_command_has_help(command: str) -> None:
+    completed = _run_cli(command, "--help")
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_onboard_and_reconfigure_expose_exactly_three_llm_inputs() -> None:
+    for command in ("onboard", "configure-llm"):
+        help_text = _run_cli(command, "--help").stdout
+        for option in ("--api-base", "--model", "--api-key-stdin"):
+            assert option in help_text
+        for removed in (
+            "--preset",
+            "--api-mode",
+            "--protocol",
+            "--auth-scheme",
+            "--anthropic-version",
+            "--timeout-seconds",
+            "--allow-insecure-loopback",
+            "--wheel-profile",
+            "--device-policy",
+            "--env-mode",
+        ):
+            assert removed not in help_text
+    assert "--llm-mode" not in _run_cli("start", "--help").stdout
+
+
+def test_noninteractive_llm_configuration_fails_before_install_when_incomplete() -> None:
+    completed = _run_cli("onboard")
+    assert completed.returncode == 1
+    assert "cancelled" in completed.stderr
+
+
+def test_single_powershell_wrapper_delegates_to_the_python_entrypoint() -> None:
+    content = _read("scripts/socialgraph.ps1")
+    assert "PythonLauncher.ps1" in content
+    assert "socialgraph.py" in content
+    assert "ValueFromRemainingArguments" in content
+
+
+def test_root_npm_scripts_are_developer_only() -> None:
+    scripts = json.loads(_read("package.json"))["scripts"]
+    assert set(scripts) == {
+        "build:web",
+        "bundle:web",
+        "check:web-bundle",
+        "test:web",
+        "typecheck:web",
+        "test:e2e",
     }
-    for name, command in expected.items():
-        content = _read(f"scripts/{name}")
-        assert '"socialgraph.py"' in content
-        assert f'"{command}"' in content
+    assert all("socialgraph.py" not in command for command in scripts.values())
 
 
-def test_root_npm_lifecycle_uses_the_cross_platform_python_selector() -> None:
-    package = json.loads(_read("package.json"))
-    scripts = package["scripts"]
-    for name in ("dev", "bootstrap:all", "dev:all", "start:all", "stop:all"):
-        assert "node scripts/run-python-cli.mjs" in scripts[name]
-    assert "node scripts/run-python-cli.mjs onboard" in scripts["onboard"]
-    assert "verify-all.ps1" in scripts["verify:all"]
-    selector = _read("scripts/run-python-cli.mjs")
-    assert 'process.env.SOCIALGRAPH_PYTHON' in selector
-    assert '["python3", []]' in selector
-    assert '["py", ["-3.12"]]' in selector
-    assert "socialgraph.py" in selector
-
-
-def test_doctor_wrapper_maps_full_diagnostics() -> None:
-    doctor = _read("scripts/doctor.ps1")
-    assert "[switch]$TestLlm" in doctor
-    assert "[switch]$Json" in doctor
-    assert "[switch]$Full" in doctor
-    assert '"--test-llm"' in doctor
-    assert '"--json"' in doctor
-    assert '"--full"' in doctor
-
-
-def test_llm_secrets_are_scoped_to_the_api_child() -> None:
-    manager = _read("scripts/lib/ProcessManager.ps1")
-    private = _read("scripts/lib/PrivateConfiguration.ps1")
-    assert "Get-ClearedLlmEnvironment" in manager
-    assert "Get-ClearedLlmEnvironment" in private
-    assert '$_.Name -like "LLM_*"' in private
-    assert '"OPENAI_API_KEY"' in private
-    assert '"ANTHROPIC_API_KEY"' in private
-    assert '"DEEPSEEK_API_KEY"' in private
-    assert '"ZHIPUAI_API_KEY"' in private
-    assert "$apiEnvironment[$name] = $privateEnvironment[$name]" in manager
-    assert "$gfmEnvironment = @{} + $common + $clearedLlm" in manager
-    assert "$governanceWebEnvironment = @{} + $common + $clearedLlm" in manager
-
-
-def test_provider_disables_proxy_inheritance_and_redirects() -> None:
+def test_provider_is_one_protocol_and_keeps_network_safety_defaults() -> None:
     provider = _read("services/api/app/provider.py")
     settings = _read("services/api/app/config.py")
+    assert "chat/completions" in settings
+    assert "derive_llm_endpoint" in provider
+    assert '"temperature": 0' in provider
+    assert '"max_tokens": 700' in provider
     assert "trust_env=False" in provider
     assert "follow_redirects=False" in provider
-    assert "validate_llm_api_base" in settings
-    assert "llm_allow_insecure_loopback" in settings
-    assert "must be configured together" in settings
+    assert "anthropic_messages" not in provider
+    assert "LLM_API_MODE" not in settings
+    assert "llm_api_base, llm_api_key, and llm_model" in settings
 
 
-def test_authorized_model_install_is_local_verified_and_staged() -> None:
-    runtime = _read("scripts/lib/ModelRuntime.ps1")
-    assert "export-manifest.json" in runtime
-    assert "smoke-report.json" in runtime
-    assert "registry\\socialgraph-global.json" in runtime
-    assert "_verify-export" in runtime
-    assert "publish --root" in runtime
-    assert ".stage" in runtime
-    assert "Invoke-WebRequest" not in _read("scripts/install-model.ps1")
+def test_runtime_keeps_llm_key_out_of_the_gfm_process() -> None:
+    operations = _read("packages/runtime/src/socialgraph_fm_runtime/operations.py")
+    assert "LLM_API_KEY" in operations
+    assert 'for name in ("LLM_API_BASE", "LLM_API_KEY", "LLM_MODEL")' in operations
+    assert "api_environment[name] = private[name]" in operations
+    assert "gfm_environment" in operations
+    assert "SOCIALGRAPH_WEB_CLIENT_ROOT" in operations
 
 
-def test_public_runtime_bundle_is_hash_bound_and_machine_derived_files_are_excluded() -> None:
-    runtime = _read("scripts/lib/RuntimeBundle.ps1")
-    manifest = _read("bundles/runtime-manifest.json")
-    assert "socialgraph-fm.runtime-bundle/1.0" in manifest
-    assert "Assert-RuntimeBundle" in runtime
-    assert '"_verify-export"' in runtime
-    assert '"smoke"' in runtime
-    assert '"publish"' in runtime
-    assert "smoke-report.json" not in manifest
-    assert "registry-candidate.json" not in manifest
-    assert "research" not in manifest
+def test_removed_legacy_powershell_runtime_does_not_return() -> None:
+    retained = {path.name for path in (SCRIPTS / "lib").glob("*.ps1")}
+    assert retained == {"NativeCommand.ps1", "PythonLauncher.ps1"}
 
 
-def test_github_ci_uses_current_runtime_paths_and_explicit_gfm_roots() -> None:
+def test_ci_and_repository_have_no_public_cuda_or_macos_workflow() -> None:
     workflow = _read(".github/workflows/ci.yml")
-    macos = _read(".github/workflows/compatibility-macos.yml")
-    cuda = _read(".github/workflows/release-cuda.yml")
-    assert "var/config/core-api.env" not in workflow
-    assert "registry/socialgraph-fm.json" not in workflow
-    assert "var/config/socialgraph-api.env" in workflow
-    assert "registry/socialgraph-global.json" in workflow
-    assert "--config-file .github/mypy-runtime.ini" in workflow
-    assert "--config-file ../../.github/mypy-api.ini" in workflow
-    assert "--config-file ../../.github/mypy-gfm.ini" in workflow
-    assert "macos-15" not in workflow
+    assert "windows-latest" in workflow and "ubuntu-latest" in workflow
+    assert "macos-" not in workflow
     assert "self-hosted" not in workflow
-    assert (
-        'python -m socialgraph_gfm.cli doctor --root "${{ runner.temp }}/socialgraph-fm"'
-        in workflow
-    )
-    assert (
-        '.venv/Scripts/python.exe -m socialgraph_gfm.cli doctor --device cpu --root "${{ runner.temp }}/socialgraph-fm"'
-        in workflow
-    )
-    assert (
-        '.venv/bin/python -m socialgraph_gfm.cli doctor --device cpu --root "${{ runner.temp }}/socialgraph-fm"'
-        in macos
-    )
-    assert "runs-on: [self-hosted, Windows, X64, socialgraph-gpu]" in cuda
-    assert "--wheel-profile cuda" in cuda
-    assert "--device-policy cuda-required" in cuda
-    assert "git merge-base --is-ancestor HEAD origin/main" in cuda
+    assert "wheel-profile" not in workflow
+    assert "device-policy" not in workflow
+    assert not (PROJECT_ROOT / ".github" / "workflows" / "compatibility-macos.yml").exists()
+    assert not (PROJECT_ROOT / ".github" / "workflows" / "release-cuda.yml").exists()
+    assert not (PROJECT_ROOT / "packages" / "gfm" / "Dockerfile").exists()
 
 
-def test_startup_powershell_behavior() -> None:
+def test_public_runtime_bundle_and_web_bundle_are_hash_bound() -> None:
+    runtime = json.loads(_read("bundles/runtime-manifest.json"))
+    assert runtime["schemaVersion"] == "socialgraph-fm.runtime-bundle/1.0"
+    assert "bundles/web" in runtime["contentRoots"]
+    assert any(item["role"] == "web" for item in runtime["assets"])
+    web = json.loads(_read("bundles/web/manifest.json"))
+    assert web["schemaVersion"] == "socialgraph-fm.web-bundle/1.0"
+    assert web["archive"]["path"] == "bundles/web/client.zip"
+
+
+def test_windows_wrapper_is_syntax_valid_when_powershell_is_available() -> None:
     powershell = shutil.which("powershell") or shutil.which("pwsh")
     if powershell is None:
-        pytest.skip("PowerShell is unavailable on this platform")
-    subprocess.run(
+        pytest.skip("PowerShell is unavailable")
+    completed = subprocess.run(
         [
             powershell,
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(SCRIPTS / "tests" / "Startup.Tests.ps1"),
+            str(SCRIPTS / "socialgraph.ps1"),
+            "--help",
         ],
         cwd=PROJECT_ROOT,
-        check=True,
+        text=True,
+        capture_output=True,
+        check=False,
     )
+    assert completed.returncode == 0, completed.stderr

@@ -1,22 +1,6 @@
 {
   "schemaVersion": "socialgraph-fm-environment-profiles/1.0",
   "profiles": {
-    "api-runtime": {
-      "pythonSeries": "3.12",
-      "platformSystem": "Windows",
-      "architectureBits": 64,
-      "constraints": "api-runtime.txt",
-      "requireIsolated": true,
-      "importModules": [
-        "fastapi",
-        "httpx",
-        "numpy",
-        "pydantic",
-        "pydantic_settings",
-        "multipart",
-        "uvicorn"
-      ]
-    },
     "trusted-converter-legacy": {
       "pythonExact": "3.10.20",
       "platformSystem": "Windows",

@@ -42,7 +42,7 @@ export type ImportViewState =
       pending: PendingImportDraft;
       issues: readonly ValidationIssue[];
       spec: GraphBuildSpec;
-      source: "llm" | "deterministic_fallback";
+      source: "llm";
       normalizationWarnings: readonly string[];
       parentVersionId?: string;
       reconstructionReason?: GraphVersionProvenance["reconstructionReason"];
@@ -52,7 +52,7 @@ export type ImportViewState =
       pending: PendingImportDraft;
       spec: GraphBuildSpec;
       run: ImportRun & { readonly graphVersion: GraphVersion };
-      source: "llm" | "deterministic_fallback";
+      source: "llm";
       warnings: readonly string[];
       parentVersionId?: string;
       reconstructionReason?: GraphVersionProvenance["reconstructionReason"];

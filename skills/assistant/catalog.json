@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "namespace": "socialgraph-fm.product-skills.assistant",
+  "schemaVersion": "socialgraph-fm.product-skills.assistant/1.0",
+  "items": [
+    {
+      "name": "answer_governance_question",
+      "label": "治理问题问答",
+      "description": "按分析员问题选择只读治理 Skill，并由已配置的大模型生成有依据的回答。",
+      "uiLocation": "对话研究与研判助手",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "governanceSkills": ["inspect_graph", "get_evidence_subgraph", "discover_coordination_groups", "rank_coordination_relations", "retrieve_similar_cases", "get_model_dataset_cards"],
+      "parameterSchema": {"type": "object", "additionalProperties": false, "required": ["message"], "properties": {"message": {"type": "string", "minLength": 1, "maxLength": 2000}}}
+    },
+    {
+      "name": "summarize_node_evidence",
+      "label": "智能证据研判",
+      "description": "汇总所选账号的证据子图以及事实关系和潜在线索。",
+      "uiLocation": "治理应用 / 智能证据研判",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "governanceSkills": ["inspect_graph", "get_evidence_subgraph", "rank_coordination_relations"],
+      "parameterSchema": {"type": "object", "additionalProperties": false, "required": ["message", "runId", "selectedTarget"], "properties": {"message": {"type": "string", "minLength": 1, "maxLength": 2000}, "runId": {"type": "string"}, "selectedTarget": {"type": "object"}}}
+    },
+    {
+      "name": "generate_global_situation_report",
+      "label": "全局态势报告",
+      "description": "基于图概况、协同群组、事实关系和潜在线索生成全局态势报告。",
+      "uiLocation": "研判助手 / 全局态势报告",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "governanceSkills": ["inspect_graph", "discover_coordination_groups", "rank_coordination_relations"],
+      "parameterSchema": {"type": "object", "additionalProperties": false, "required": ["message", "runId"], "properties": {"message": {"type": "string", "minLength": 1, "maxLength": 2000}, "runId": {"type": "string"}}}
+    },
+    {
+      "name": "generate_account_evidence_report",
+      "label": "当前账号证据报告",
+      "description": "基于所选账号的证据子图和关系排名生成只读证据报告。",
+      "uiLocation": "研判助手 / 当前账号证据报告",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "governanceSkills": ["inspect_graph", "get_evidence_subgraph", "rank_coordination_relations"],
+      "parameterSchema": {"type": "object", "additionalProperties": false, "required": ["message", "runId", "selectedTarget"], "properties": {"message": {"type": "string", "minLength": 1, "maxLength": 2000}, "runId": {"type": "string"}, "selectedTarget": {"type": "object"}}}
+    },
+    {
+      "name": "generate_coordination_report",
+      "label": "群组与关系研判报告",
+      "description": "基于协同群组、事实关系和潜在线索生成群组与关系研判报告。",
+      "uiLocation": "研判助手 / 群组与关系研判报告",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "governanceSkills": ["inspect_graph", "discover_coordination_groups", "rank_coordination_relations"],
+      "parameterSchema": {"type": "object", "additionalProperties": false, "required": ["message", "runId"], "properties": {"message": {"type": "string", "minLength": 1, "maxLength": 2000}, "runId": {"type": "string"}}}
+    },
+    {
+      "name": "generate_case_review_draft",
+      "label": "人工研判草稿",
+      "description": "根据当前研判单、证据、群组和关系生成不落库的人工研判预览。",
+      "uiLocation": "研判助手 / 人工研判草稿",
+      "readOnly": true,
+      "confirmationRequired": false,
+      "governanceSkills": ["inspect_graph", "get_evidence_subgraph", "discover_coordination_groups", "rank_coordination_relations"],
+      "parameterSchema": {"type": "object", "additionalProperties": false, "required": ["message", "caseId", "caseHash"], "properties": {"message": {"type": "string", "minLength": 1, "maxLength": 2000}, "runId": {"type": "string"}, "caseId": {"type": "string"}, "caseHash": {"type": "string"}, "selectedTarget": {"type": "object"}}}
+    }
+  ]
+}

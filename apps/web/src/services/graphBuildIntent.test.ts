@@ -86,7 +86,7 @@ describe("graph build intent client", () => {
     expect(new Headers(init.headers).get("X-Request-ID")).toBe("build-request-1");
   });
 
-  it("rejects a stale request id and falls back to grounded deterministic rules", async () => {
+  it("rejects a stale request id without constructing a local fallback", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       kind: "graph_build_intent",
       mapping: { sourceColumn: "invented", targetColumn: "to_user" },
@@ -97,11 +97,8 @@ describe("graph build intent client", () => {
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const normalizer = new HttpGraphBuildIntentNormalizer({ baseUrl: "http://api.test", fetcher: fetcher as unknown as typeof fetch });
 
-    const result = await normalizer.normalizeGraphBuildIntent(input());
-
-    expect(result.source).toBe("deterministic_fallback");
-    expect(result.requestToken).toBe("build-request-1");
-    expect(result.warnings[0]).toContain("本地确定性建议");
+    await expect(normalizer.normalizeGraphBuildIntent(input()))
+      .rejects.toThrow("INVALID_GRAPH_BUILD_INTENT_RESPONSE");
   });
 
   it("sends role-scoped aggregate profiles for dual tables and accepts grounded node mapping v1.1", async () => {

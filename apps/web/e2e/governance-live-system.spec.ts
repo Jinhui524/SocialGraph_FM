@@ -434,23 +434,19 @@ test("real governance catalog completes both target lanes and target governance 
   const rag = page.getByRole("complementary", { name: "案例研判助手" });
   await rag.getByLabel("输入研判问题").fill("请说明还需要核对哪些直接关系");
   const assistantResponse = page.waitForResponse((response) => response.request().method() === "POST"
-    && new URL(response.url()).pathname.endsWith("/assistant/dispatch"));
+    && new URL(response.url()).pathname.endsWith("/assistant/execute"));
   await rag.getByRole("button", { name: "生成报告", exact: true }).click();
   const assistantDocumentResponse = await assistantResponse;
   expect(assistantDocumentResponse.ok()).toBe(true);
   const assistantDocument = await assistantDocumentResponse.json() as {
     readonly answer: string;
-    readonly deterministicFallback: boolean;
-    readonly generationMode: string | null;
-    readonly fallbackPhase: string | null;
-    readonly reasonCode: string | null;
+    readonly skill: string;
+    readonly executionId: string;
   };
   expect(assistantDocument).toMatchObject({
-    deterministicFallback: false,
-    generationMode: "llm_assisted",
-    fallbackPhase: null,
-    reasonCode: null,
+    skill: "answer_governance_question",
   });
+  expect(assistantDocument.executionId).toMatch(/^assistant-exec-[0-9a-f]{32}$/u);
   expect(assistantDocument.answer).toMatch(/^## 证据核对要求\n\n/u);
   await expect(rag.locator(".governance-assistant-answer")).toBeVisible({ timeout: 30_000 });
   await expect(rag).not.toContainText(/skillCalls|auditHash|modelStateHash/u);

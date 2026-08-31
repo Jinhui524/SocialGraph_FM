@@ -1,39 +1,25 @@
 {
-  "schemaVersion": "socialgraph-fm.gfm-install-lock-manifest/1.0",
+  "schemaVersion": "socialgraph-fm.gfm-install-lock-manifest/2.0",
   "profilesFile": "install-profiles.json",
-  "profilesSha256": "f9aedb5c02c15784f9822ae4b7e5668cfd367005d1d1f490ad1a5cdfe1ee0d34",
-  "buildRequirementsFile": "constraints/install-build.txt",
-  "buildRequirementsSha256": "262d36a969cc0724c39ff5f4eae24ecd5a9d28347da0404c17a824144c6f718c",
-  "generatedWith": "uv 0.12.3",
+  "profilesSha256": "35da5ae028b849c08e1349b8a49f1eaad369d16a41cdd95e6b81a9f2bb9dca0a",
+  "runtimeRequirementsFile": "constraints/public-runtime.in",
+  "runtimeRequirementsSha256": "97f80fc5c76a6d0d06a8dc53f69d167daa727fc52d1977af341ac0369ff34212",
   "policy": {
     "sourceBuildsAllowed": false,
-    "requireArtifactHashesForManagedInstall": true,
-    "note": "These locks describe end-user installation environments and do not replace the immutable model-training runtime locks."
+    "hashesRequired": true,
+    "runtimeEnvironmentCount": 1,
+    "supportedDevices": ["cpu"],
+    "supportedSystems": ["Windows", "Linux"]
   },
   "profiles": {
     "windows-x86_64-cpu-pt28": {
       "requirementsLock": "locks/install-windows-x86_64-cpu-pt28.requirements.txt",
-      "requirementsLockSha256": "63db1de7ab6909f4d781d4d5d2ec7b7966a4de2bca061fddcec6fcdbf772f88f",
+      "requirementsLockSha256": "06b3d56970a8f0dde5747c03906951bfc03d8514d3b994d96b3953511e9a8e70",
       "artifactHashesResolved": true
     },
     "linux-x86_64-cpu-pt28": {
       "requirementsLock": "locks/install-linux-x86_64-cpu-pt28.requirements.txt",
-      "requirementsLockSha256": "beb26c6c8f8c0c1b40ee075ff087aec009e50e560c5bf2eb8204216b1a6c2038",
-      "artifactHashesResolved": true
-    },
-    "macos-arm64-cpu-pt28": {
-      "requirementsLock": "locks/install-macos-arm64-cpu-pt28.requirements.txt",
-      "requirementsLockSha256": "0b7aa816ff4017aaa526c6d938fe7aa46b2fd417bc67826fe0ad7889b15a6099",
-      "artifactHashesResolved": true
-    },
-    "windows-x86_64-cu130-pt212": {
-      "requirementsLock": "locks/install-windows-x86_64-cu130-pt212.requirements.txt",
-      "requirementsLockSha256": "874ee079ecacee7f47e6d41ebc7aa0af53a337b9f21516a2f0c5991166860753",
-      "artifactHashesResolved": true
-    },
-    "linux-x86_64-cu130-pt212": {
-      "requirementsLock": "locks/install-linux-x86_64-cu130-pt212.requirements.txt",
-      "requirementsLockSha256": "0439645663ba5209b7a706ced1c7de34e07416ba0d46eef59684a177f1970871",
+      "requirementsLockSha256": "4c67f5a82cef0b0b1bc127a319f278982f8f82de7d078b6b77d97b8487323c2c",
       "artifactHashesResolved": true
     }
   }

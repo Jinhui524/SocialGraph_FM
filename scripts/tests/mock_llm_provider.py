@@ -1,4 +1,4 @@
-"""Loopback OpenAI-compatible provider used by clean-clone acceptance."""
+"""Loopback Chat Completions provider used only by repository acceptance tests."""
 
 from __future__ import annotations
 
@@ -7,23 +7,18 @@ import json
 import re
 from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Literal
-
-ApiMode = Literal["chat_completions", "responses", "anthropic_messages"]
+from typing import Any
 
 _CONNECTION_RESULT = {"socialgraph_fm_connection_check": "ok"}
 _HEADING_PATTERN = re.compile(
     r"Begin exactly with the Markdown heading ## (?P<heading>[^.]+)\."
 )
+_CHINESE_HEADING_PATTERN = re.compile(
+    r"必须以 Markdown 标题 ## (?P<heading>[^。]+) 开头。"
+)
 
 
-def _prompt(request: Mapping[str, Any], api_mode: ApiMode, role: str) -> str | None:
-    if api_mode == "responses":
-        value = request.get("instructions" if role == "system" else "input")
-        return value if isinstance(value, str) else None
-    if api_mode == "anthropic_messages" and role == "system":
-        value = request.get("system")
-        return value if isinstance(value, str) else None
+def _prompt(request: Mapping[str, Any], role: str) -> str | None:
     messages = request.get("messages")
     if not isinstance(messages, list):
         return None
@@ -37,12 +32,11 @@ def _prompt(request: Mapping[str, Any], api_mode: ApiMode, role: str) -> str | N
     return None
 
 
-def _strict_result(request: Mapping[str, Any], api_mode: ApiMode) -> dict[str, Any]:
+def _strict_result(request: Mapping[str, Any]) -> dict[str, Any]:
     """Return only the bounded JSON contracts exercised by public acceptance."""
 
-    system_prompt = _prompt(request, api_mode, "system") or ""
-    user_prompt = _prompt(request, api_mode, "user") or ""
-
+    system_prompt = _prompt(request, "system") or ""
+    user_prompt = _prompt(request, "user") or ""
     if (
         "connection verifier" in system_prompt
         and "socialgraph_fm_connection_check" in user_prompt
@@ -54,8 +48,13 @@ def _strict_result(request: Mapping[str, Any], api_mode: ApiMode) -> dict[str, A
         return {
             "narrative": "该草稿仅依据已绑定事实与引用生成，仍需由人工核对后使用。"
         }
-    if 'Return JSON exactly as {"answer":"..."}' in system_prompt:
-        heading_match = _HEADING_PATTERN.search(system_prompt)
+    if (
+        'Return JSON exactly as {"answer":"..."}' in system_prompt
+        or '仅返回 {"answer":"..."}' in system_prompt
+    ):
+        heading_match = _HEADING_PATTERN.search(system_prompt) or _CHINESE_HEADING_PATTERN.search(
+            system_prompt
+        )
         prefix = f"## {heading_match.group('heading')}\n\n" if heading_match else ""
         return {
             "answer": (
@@ -68,41 +67,9 @@ def _strict_result(request: Mapping[str, Any], api_mode: ApiMode) -> dict[str, A
     raise ValueError("unsupported mock LLM request contract")
 
 
-def _envelope(result: Mapping[str, Any], api_mode: ApiMode, model: object) -> dict[str, Any]:
+def _envelope(result: Mapping[str, Any], model: object) -> dict[str, Any]:
     content = json.dumps(dict(result), ensure_ascii=False, separators=(",", ":"))
     model_name = model if isinstance(model, str) and model else "socialgraph-fm-mock"
-    if api_mode == "responses":
-        return {
-            "id": "resp_socialgraph_fm_mock",
-            "object": "response",
-            "status": "completed",
-            "model": model_name,
-            "output": [
-                {
-                    "id": "msg_socialgraph_fm_mock",
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": content,
-                            "annotations": [],
-                        }
-                    ],
-                }
-            ],
-            "output_text": content,
-        }
-    if api_mode == "anthropic_messages":
-        return {
-            "id": "msg_socialgraph_fm_mock",
-            "type": "message",
-            "role": "assistant",
-            "model": model_name,
-            "content": [{"type": "text", "text": content}],
-            "stop_reason": "end_turn",
-        }
     return {
         "id": "chatcmpl_socialgraph_fm_mock",
         "object": "chat.completion",
@@ -118,7 +85,7 @@ def _envelope(result: Mapping[str, Any], api_mode: ApiMode, model: object) -> di
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "SocialGraphFMMock/1.0"
+    server_version = "SocialGraphFMMock/2.0"
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -138,6 +105,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not_found"})
 
     def do_POST(self) -> None:
+        if self.path != "/v1/chat/completions":
+            self._json(404, {"error": "not_found"})
+            return
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0 or length > 1_048_576:
             self._json(400, {"error": "invalid_body"})
@@ -147,28 +117,14 @@ class _Handler(BaseHTTPRequestHandler):
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._json(400, {"error": "invalid_json"})
             return
-        if self.path == "/v1/responses":
-            api_mode: ApiMode = "responses"
-        elif self.path == "/v1/chat/completions":
-            api_mode = "chat_completions"
-        elif self.path == "/v1/messages":
-            api_mode = "anthropic_messages"
-        else:
-            self._json(404, {"error": "not_found"})
-            return
-        bearer = self.headers.get("Authorization", "").startswith("Bearer ")
-        x_api_key = bool(self.headers.get("x-api-key", ""))
-        anthropic_version = self.headers.get("anthropic-version")
-        authorized = (
-            bearer
-            if api_mode != "anthropic_messages"
-            else (bearer or x_api_key) and anthropic_version == "2023-06-01"
-        )
-        if not isinstance(request, dict) or not authorized:
+        if (
+            not isinstance(request, dict)
+            or not self.headers.get("Authorization", "").startswith("Bearer ")
+        ):
             self._json(401, {"error": "unauthorized"})
             return
         try:
-            result = _strict_result(request, api_mode)
+            result = _strict_result(request)
         except ValueError:
             self._json(
                 422,
@@ -180,7 +136,7 @@ class _Handler(BaseHTTPRequestHandler):
                 },
             )
             return
-        self._json(200, _envelope(result, api_mode, request.get("model")))
+        self._json(200, _envelope(result, request.get("model")))
 
 
 def main() -> None:

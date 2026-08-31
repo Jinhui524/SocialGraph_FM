@@ -226,7 +226,7 @@ test("chat upload is reused by governance and analysis stays confirmation-gated"
   const reportResponsePromise = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return response.request().method() === "POST"
-      && url.pathname === "/api/v2/gfm/governance/assistant/dispatch"
+      && url.pathname === "/api/v2/gfm/governance/assistant/execute"
       && (response.request().postData() ?? "").includes('"runId"');
   }, { timeout: 120_000 });
   await confirm.click();
@@ -259,29 +259,19 @@ test("chat upload is reused by governance and analysis stays confirmation-gated"
   const reportResponse = await reportResponsePromise;
   expect(reportResponse.ok()).toBe(true);
   const report = await reportResponse.json() as {
-    readonly intent: string;
-    readonly answerMode?: string;
-    readonly status: string;
+    readonly skill: string;
     readonly answer: string;
     readonly skillCalls?: readonly { readonly skill: string }[];
   };
-  expect(report).toMatchObject({ intent: "answer", status: "completed" });
+  expect(report.skill).toBe("generate_global_situation_report");
   expect(report.answer.length).toBeLessThanOrEqual(1_500);
   await expect(planningMessage).toContainText("五阶段分析完成", { timeout: 120_000 });
   const reportMessage = page.locator(".chat-message--assistant").last();
-  if (report.answerMode) {
-    expect(report.answerMode).toBe("analysis_summary");
-    expect(report.skillCalls?.length).toBeGreaterThan(0);
-    expect(report.skillCalls?.every(({ skill }) => !["run_governance_analysis", "draft_review_report"].includes(skill))).toBe(true);
-    for (const heading of ["全局态势报告", "重点候选账号", "重点风险群组", "重点事实关系", "待核验潜在线索", "人工复核建议"]) {
-      expect(report.answer).toContain(heading);
-      await expect(reportMessage.getByRole("heading", { name: heading, exact: true })).toBeVisible({ timeout: 120_000 });
-    }
-  } else {
-    for (const heading of ["治理摘要", "重点候选", "协同群组", "重点关系", "人工复核建议"]) {
-      expect(report.answer).toContain(heading);
-      await expect(reportMessage.getByRole("heading", { name: heading, exact: true })).toBeVisible({ timeout: 120_000 });
-    }
+  expect(report.skillCalls?.length).toBeGreaterThan(0);
+  expect(report.skillCalls?.every(({ skill }) => !["run_governance_analysis", "draft_review_report"].includes(skill))).toBe(true);
+  for (const heading of ["全局态势报告", "重点候选账号", "重点风险群组", "重点事实关系", "待核验潜在线索", "人工复核建议"]) {
+    expect(report.answer).toContain(heading);
+    await expect(reportMessage.getByRole("heading", { name: heading, exact: true })).toBeVisible({ timeout: 120_000 });
   }
   await expect(page.getByRole("button", { name: "打开复核工作台", exact: true })).toHaveCount(1);
   expect(artifactUploadCount).toBe(1);

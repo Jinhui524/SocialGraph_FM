@@ -19,8 +19,7 @@ import {
   type TargetFixtureMode,
 } from "../src/test/fixtures/governanceTargetTask";
 import {
-  GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-  GOVERNANCE_ASSISTANT_SCHEMA,
+  ASSISTANT_SKILL_RESULT_SCHEMA,
   GOVERNANCE_PUBLIC_SKILLS,
   GOVERNANCE_SKILLS_SCHEMA,
 } from "../src/types/governanceSkills";
@@ -226,8 +225,8 @@ async function mockIndependentTargets(page: Page) {
       increment(calls.handoffReads, fewHandoff.handoffHash); return json(route, fewHandoff);
     }
     if (method === "GET" && path === `${base}/skills`) return json(route, { schemaVersion: GOVERNANCE_SKILLS_SCHEMA, items: GOVERNANCE_PUBLIC_SKILLS.map((name) => ({ name, readOnly: !["run_governance_analysis", "draft_review_report"].includes(name), confirmationRequired: ["run_governance_analysis", "draft_review_report"].includes(name), description: name, parameterSchema: { type: "object" } })), catalogHash: "d".repeat(64) });
-    if (method === "POST" && path === `${base}/assistant/dispatch`) {
-      const body = request.postDataJSON() as { answerMode?: string; graph?: { artifactId?: string; datasetContentHash?: string; graphVersionHash?: string }; model?: { modelVersionId?: string; modelStateHash?: string }; context?: { runId?: string; caseId?: string; selectedTarget?: { targetType?: string; targetId?: string } } };
+    if (method === "POST" && path === `${base}/assistant/execute`) {
+      const body = request.postDataJSON() as { skill?: string; graph?: { artifactId?: string; datasetContentHash?: string; graphVersionHash?: string }; model?: { modelVersionId?: string; modelStateHash?: string }; context?: { runId?: string; caseId?: string; selectedTarget?: { targetType?: string; targetId?: string } } };
       const mode = modes.find((candidate) => {
         const registration = registrationFor(candidate); const run = runFor(candidate);
         return body.graph?.artifactId === registration.artifact.artifactId && body.graph.datasetContentHash === registration.artifact.datasetContentHash
@@ -240,38 +239,16 @@ async function mockIndependentTargets(page: Page) {
       if (!mode) return rejectIdentity(route, method, path);
       increment(calls.assistantReads, runFor(mode).runId);
       return json(route, {
-        schemaVersion: GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA,
-        dispatchId: `governance-dispatch-${"8".repeat(32)}`,
-        intent: "answer",
-        answerMode: body.answerMode ?? "overview",
-        status: "completed",
+        schemaVersion: ASSISTANT_SKILL_RESULT_SCHEMA,
+        executionId: `assistant-exec-${"8".repeat(32)}`,
+        skill: body.skill,
         answer: "### 证据核对\n\n请核对直接关系与邻域对象，再记录人工判断。",
         result: {},
-        deterministicFallback: true,
-        generationMode: "deterministic_report",
-        fallbackPhase: null,
-        reasonCode: null,
         evidenceRefs: [],
-        confirmation: null,
-        navigation: null,
         skillCalls: [{ skill: "inspect_graph", requestHash: "8".repeat(64), resultHash: "9".repeat(64) }],
         citedHashes: ["a".repeat(64)],
         auditHash: "a".repeat(64),
       });
-    }
-    if (method === "POST" && path === `${base}/assistant/turn`) {
-      const body = request.postDataJSON() as { graph?: { artifactId?: string; datasetContentHash?: string; graphVersionHash?: string }; model?: { modelVersionId?: string; modelStateHash?: string }; context?: { runId?: string; caseId?: string; selectedNodeIds?: string[] } };
-      const mode = modes.find((candidate) => {
-        const registration = registrationFor(candidate); const run = runFor(candidate);
-        return body.graph?.artifactId === registration.artifact.artifactId && body.graph.datasetContentHash === registration.artifact.datasetContentHash
-          && body.graph.graphVersionHash === registration.artifact.graphVersionHash && body.model?.modelVersionId === run.modelVersionId
-          && body.model.modelStateHash === run.modelStateHash && body.context?.runId === run.runId
-          && (!body.context.caseId || body.context.caseId === caseIdFor(candidate))
-          && (body.context.selectedNodeIds ?? []).every((nodeId) => targetResult(candidate).findings.some((finding) => finding.nodeId === nodeId));
-      });
-      if (!mode) return rejectIdentity(route, method, path);
-      increment(calls.assistantReads, runFor(mode).runId);
-      return json(route, { schemaVersion: GOVERNANCE_ASSISTANT_SCHEMA, turnId: `governance-turn-${"8".repeat(32)}`, answer: "### 证据核对\n\n请核对直接关系与邻域对象，再记录人工判断。", deterministicFallback: true, skillCalls: [{ skill: "inspect_graph", requestHash: "8".repeat(64), resultHash: "9".repeat(64) }], citedHashes: ["a".repeat(64)], auditHash: "a".repeat(64) });
     }
     if (method === "POST" && path === `${base}/knowledge/search`) {
       const body = request.postDataJSON() as { graph?: { artifactId?: string; datasetContentHash?: string; graphVersionHash?: string }; model?: { modelVersionId?: string; modelStateHash?: string } };

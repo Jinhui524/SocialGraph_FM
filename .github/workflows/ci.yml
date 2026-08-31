@@ -16,23 +16,25 @@ concurrency:
 jobs:
   web:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test -- --reporter=dot
-      - run: npm run test:benchmark-runner
-      - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e:offline
+      - run: npm --prefix apps/web ci
+      - run: npm --prefix apps/web run typecheck
+      - run: npm --prefix apps/web test -- --reporter=dot
+      - run: npm --prefix apps/web run test:benchmark-runner
+      - run: npm run check:web-bundle
+      - run: python -m pip install pytest==9.0.3
+      - run: python -m pytest -q tests/test_web_bundle.py
+      - run: npm --prefix apps/web exec -- playwright install --with-deps chromium
+      - run: npm --prefix apps/web run test:e2e:offline
 
   api:
     runs-on: ubuntu-latest
@@ -45,8 +47,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: |
-            services/api/requirements-dev.lock
+          cache-dependency-path: services/api/requirements-dev.lock
       - run: pip install --require-hashes -r requirements-dev.lock
       - run: ruff check .
       - run: mypy --config-file ../../.github/mypy-api.ini app
@@ -63,20 +64,13 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
       - run: python -m pip install pytest==9.0.3 ruff==0.13.2 mypy==1.18.2
-      - run: python -m pip install --no-deps ./packages/runtime
-      - run: socialgraph-fm --help
       - run: python scripts/socialgraph.py --help
-      - run: python scripts/socialgraph.py setup --help
       - run: python scripts/socialgraph.py onboard --help
       - run: python scripts/socialgraph.py configure-llm --help
-      - run: python scripts/socialgraph.py export-github --help
       - run: python scripts/socialgraph.py start --help
+      - run: python scripts/socialgraph.py stop --help
       - run: python scripts/socialgraph.py doctor --help
-      - run: node scripts/run-python-cli.mjs --help
       - name: Probe Python from PowerShell 7
         shell: pwsh
         run: ./scripts/tests/NativeCommand.Tests.ps1
@@ -84,13 +78,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./scripts/tests/NativeCommand.Tests.ps1
-      - name: Check Windows startup contracts
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/tests/Startup.Tests.ps1
-      - run: python -m ruff check packages/runtime/src packages/runtime/tests scripts/socialgraph.py
+      - run: python -m ruff check packages/runtime/src packages/runtime/tests scripts/socialgraph.py scripts/build-web-bundle.py scripts/refresh-runtime-manifest.py
       - run: python -m mypy --config-file .github/mypy-runtime.ini packages/runtime/src
-      - run: python -m pytest -vv --maxfail=1 tests/test_startup_scripts.py tests/test_mock_llm_provider.py packages/runtime/tests
+      - run: python -m pytest --import-mode=importlib -vv --maxfail=1 tests/test_startup_scripts.py tests/test_mock_llm_provider.py tests/test_web_bundle.py packages/runtime/tests
 
   gfm-ubuntu-cpu:
     runs-on: ubuntu-latest
@@ -118,8 +108,8 @@ jobs:
       - run: mypy --config-file ../../.github/mypy-gfm.ini src
       - run: pytest -vv -ra
       - run: python -m socialgraph_gfm.cli doctor --root "${{ runner.temp }}/socialgraph-fm" --json
-      - run: python -m socialgraph_gfm.cli smoke --fixture both --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
-      - run: python -m socialgraph_gfm.cli preflight --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
+      - run: python -m socialgraph_gfm.cli smoke --fixture both --root "${{ runner.temp }}/socialgraph-fm" --json
+      - run: python -m socialgraph_gfm.cli preflight --root "${{ runner.temp }}/socialgraph-fm" --json
 
   gfm-windows-cpu:
     runs-on: windows-latest
@@ -140,14 +130,13 @@ jobs:
           --index-url https://pypi.org/simple
           --extra-index-url https://download.pytorch.org/whl/cpu
           --find-links https://data.pyg.org/whl/torch-2.8.0+cpu.html
-          -r locks/install-windows-x86_64-cpu-pt28.requirements.txt
+          -r locks/cpu-ci.requirements.txt
       - run: .venv/Scripts/python.exe -m pip install --no-deps --no-build-isolation .
-      - run: .venv/Scripts/python.exe -m pip install pytest==9.0.3
       - run: .venv/Scripts/python.exe -m pip check
       - run: .venv/Scripts/python.exe -m pytest -vv --maxfail=1 -ra
-      - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli doctor --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
-      - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli smoke --fixture both --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
-      - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli preflight --device cpu --root "${{ runner.temp }}/socialgraph-fm" --json
+      - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli doctor --root "${{ runner.temp }}/socialgraph-fm" --json
+      - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli smoke --fixture both --root "${{ runner.temp }}/socialgraph-fm" --json
+      - run: .venv/Scripts/python.exe -m socialgraph_gfm.cli preflight --root "${{ runner.temp }}/socialgraph-fm" --json
 
   repository-policy:
     runs-on: ubuntu-latest
@@ -161,14 +150,14 @@ jobs:
         run: ./scripts/tests/NativeCommand.Tests.ps1
       - shell: pwsh
         run: ./scripts/publication-check.ps1 -RepositoryRoot .
-      - shell: pwsh
-        run: ./scripts/tests/RuntimeBundle.Tests.ps1
       - run: >-
           python -m pytest -vv --maxfail=1
           tests/test_publication_policy.py
           tests/test_brand_policy.py
           tests/test_contract_mirrors.py
           tests/test_runtime_bundle.py
+          tests/test_startup_scripts.py
+          tests/test_web_bundle.py
 
   download-zip-contract:
     strategy:
@@ -182,59 +171,54 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install pytest==9.0.3
-      - name: Export and inspect the no-Git Download ZIP
+      - name: Export and inspect a no-Git source archive
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $exportedRepository = Join-Path $env:RUNNER_TEMP "exported-repository"
           $archive = Join-Path $env:RUNNER_TEMP "SocialGraph-FM.zip"
           $download = Join-Path $env:RUNNER_TEMP "download-zip"
-          python scripts/socialgraph.py export-github `
-            --repository $exportedRepository `
-            --zip $archive
-          if ($LASTEXITCODE -ne 0) { throw "Public ZIP export failed" }
+          git archive --format=zip --output=$archive HEAD
           Expand-Archive -LiteralPath $archive -DestinationPath $download
           if (Test-Path -LiteralPath (Join-Path $download ".git")) {
             throw "Download ZIP unexpectedly contains Git metadata"
           }
           Push-Location $download
           try {
-            python scripts/socialgraph.py onboard --help
-            if ($LASTEXITCODE -ne 0) { throw "ZIP onboarding entry point failed" }
-            python -m pytest -q tests/test_runtime_bundle.py tests/test_startup_scripts.py
-            if ($LASTEXITCODE -ne 0) { throw "ZIP contract tests failed" }
+            python scripts/socialgraph.py --help
+            python -m pytest -q tests/test_runtime_bundle.py tests/test_startup_scripts.py tests/test_web_bundle.py
           }
           finally {
             Pop-Location
           }
 
-  clean-clone-windows:
-    runs-on: windows-latest
+  clean-runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: SocialGraph FM
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-      - name: Complete CPU runtime quickstart, browser gate, and clean shutdown
+      - name: Complete the single-environment CPU quickstart
         shell: pwsh
-        working-directory: ${{ github.workspace }}/SocialGraph FM
         run: |
           $ErrorActionPreference = "Stop"
           $mockPort = 18991
           $mockPython = (Get-Command python -ErrorAction Stop).Source
-          $mockLlm = Start-Process `
-            -FilePath $mockPython `
-            -ArgumentList @("scripts/tests/mock_llm_provider.py", "--port", "$mockPort") `
-            -PassThru -WindowStyle Hidden
+          $startParameters = @{
+            FilePath = $mockPython
+            ArgumentList = @("scripts/tests/mock_llm_provider.py", "--port", "$mockPort")
+            PassThru = $true
+          }
+          if ($IsWindows) { $startParameters.WindowStyle = "Hidden" }
+          $mockLlm = Start-Process @startParameters
           try {
             $ready = $false
-            for ($attempt = 0; $attempt -lt 40; $attempt++) {
+            for ($attempt = 0; $attempt -lt 60; $attempt++) {
               try {
                 $ready = (Invoke-RestMethod "http://127.0.0.1:$mockPort/health").status -eq "ok"
               }
@@ -242,75 +226,65 @@ jobs:
               if ($ready) { break }
             }
             if (-not $ready) { throw "Mock LLM provider did not start" }
-            "clean-clone-placeholder" | python scripts/socialgraph.py onboard `
-              --wheel-profile cpu `
-              --device-policy auto `
-              --env-mode managed `
-              --preset custom `
+
+            "clean-runtime-placeholder" | python scripts/socialgraph.py onboard `
               --api-base "http://127.0.0.1:$mockPort/v1" `
-              --model clean-clone-model `
-              --api-mode responses `
-              --auth-scheme bearer `
-              --allow-insecure-loopback `
+              --model clean-runtime-model `
               --api-key-stdin
-            if ($LASTEXITCODE -ne 0) { throw "Non-interactive onboarding failed" }
-            $runtimeProfile = Get-Content ./var/config/runtime-profile.json -Raw | ConvertFrom-Json
-            $apiPython = [string]$runtimeProfile.interpreters.api.path
-            $gfmPython = [string]$runtimeProfile.interpreters.gfm.path
-            $apiFreezeBefore = Join-Path $env:RUNNER_TEMP "socialgraph-api-before.txt"
-            $apiFreezeAfter = Join-Path $env:RUNNER_TEMP "socialgraph-api-after.txt"
-            $gfmFreezeBefore = Join-Path $env:RUNNER_TEMP "socialgraph-gfm-before.txt"
-            $gfmFreezeAfter = Join-Path $env:RUNNER_TEMP "socialgraph-gfm-after.txt"
-            & $apiPython -m pip freeze --all | Set-Content -LiteralPath $apiFreezeBefore -Encoding utf8
-            & $gfmPython -m pip freeze --all | Set-Content -LiteralPath $gfmFreezeBefore -Encoding utf8
-            python scripts/socialgraph.py setup --wheel-profile cpu --device-policy auto --env-mode reuse `
-              --api-python $apiPython --gfm-python $gfmPython --skip-web
-            & $apiPython -m pip freeze --all | Set-Content -LiteralPath $apiFreezeAfter -Encoding utf8
-            & $gfmPython -m pip freeze --all | Set-Content -LiteralPath $gfmFreezeAfter -Encoding utf8
-            if (Compare-Object (Get-Content $apiFreezeBefore) (Get-Content $apiFreezeAfter)) {
-              throw "Reuse setup changed the API environment"
+            if ($LASTEXITCODE -ne 0) { throw "Onboarding failed" }
+
+            $profile = Get-Content ./var/config/runtime-profile.json -Raw | ConvertFrom-Json
+            $runtimePython = [string]$profile.interpreter.path
+            if (-not (Test-Path -LiteralPath $runtimePython)) { throw "Managed interpreter missing" }
+            if ((Resolve-Path $runtimePython).Path -notlike "$(Resolve-Path ./var/runtime)*") {
+              throw "Runtime interpreter is outside var/runtime"
             }
-            if (Compare-Object (Get-Content $gfmFreezeBefore) (Get-Content $gfmFreezeAfter)) {
-              throw "Reuse setup changed the GFM environment"
+            & $runtimePython -c "import importlib.util; assert importlib.util.find_spec('ogb') is None; assert importlib.util.find_spec('torch') is not None; assert importlib.util.find_spec('torch_geometric') is not None; assert importlib.util.find_spec('pyg_lib') is not None"
+            if ($LASTEXITCODE -ne 0) { throw "Runtime dependency boundary failed" }
+            if (Test-Path ./apps/web/node_modules) { throw "Onboarding created node_modules" }
+            if (-not (Test-Path ./var/web/client/index.html)) { throw "Prebuilt Web was not installed" }
+            $privateNames = @(Get-Content ./var/config/socialgraph-api.env | ForEach-Object { ($_ -split '=', 2)[0] })
+            if (Compare-Object $privateNames @("LLM_API_BASE", "LLM_MODEL", "LLM_API_KEY")) {
+              throw "Private LLM config does not contain exactly three fields"
             }
-            npm --prefix apps/web exec -- playwright install chromium
-            if ($LASTEXITCODE -ne 0) { throw "Playwright Chromium install failed" }
-            $savedConfig = Get-Content ./var/config/socialgraph-api.env -Raw
-            if ($savedConfig -notmatch 'LLM_VERIFICATION_STATUS=call_succeeded') {
-              throw "Mock LLM configuration was not verified"
-            }
-            $env:LLM_API_KEY = "test-inherited-sentinel"
-            $env:OPENAI_API_KEY = "test-inherited-sentinel"
-            $env:ANTHROPIC_API_KEY = "test-inherited-sentinel"
-            $env:DEEPSEEK_API_KEY = "test-inherited-sentinel"
-            $env:ZHIPUAI_API_KEY = "test-inherited-sentinel"
-            python scripts/socialgraph.py start --llm-mode required --no-llm-prompt
-            $health = Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
-            $capabilities = Invoke-RestMethod http://127.0.0.1:8000/api/v1/capabilities
-            $gfm = Invoke-RestMethod http://127.0.0.1:8000/api/v2/gfm/governance/health
+
+            $env:LLM_API_KEY = "ambient-sentinel"
+            $env:OPENAI_API_KEY = "ambient-sentinel"
+            python scripts/socialgraph.py start
+            if ($LASTEXITCODE -ne 0) { throw "Start failed" }
+
+            $health = Invoke-RestMethod http://127.0.0.1:5173/api/v1/health
+            $capabilities = Invoke-RestMethod http://127.0.0.1:5173/api/v1/capabilities
+            $gfm = Invoke-RestMethod http://127.0.0.1:5173/api/v2/gfm/governance/health
+            $assistant = Invoke-RestMethod http://127.0.0.1:5173/api/v2/gfm/governance/assistant/skills
+            $skills = Invoke-RestMethod http://127.0.0.1:5173/api/v2/gfm/governance/skills
             $web = Invoke-WebRequest http://127.0.0.1:5173/
             if ($health.status -ne "ok") { throw "API health failed" }
             if (-not $capabilities.intentNormalization.configured -or
-                $capabilities.intentNormalization.model -ne "clean-clone-model" -or
-                $capabilities.intentNormalization.connectionStatus -ne "call_succeeded") {
-              throw "Verified private LLM configuration was not loaded"
+                $capabilities.intentNormalization.mode -ne "llm_required" -or
+                $capabilities.intentNormalization.model -ne "clean-runtime-model") {
+              throw "Required LLM capability mismatch"
             }
-            if (-not $gfm.servingReady -or $gfm.device -ne "cpu") { throw "Bundled Global model is not CPU serving-ready" }
-            if (-not (Test-Path ./var/models/socialgraph-global/registry/socialgraph-global.json)) { throw "Bundled model registry missing" }
-            if (-not (Test-Path ./var/gfm/governance/knowledge/manifest.json)) { throw "SocialGraph-FM Governance knowledge seed missing" }
-            if (-not (Test-Path ./var/gfm/governance/reviewed-cases/manifest.json)) { throw "Reviewed-case seed missing" }
-            if ($web.StatusCode -ne 200) { throw "Web preview unavailable" }
-            $env:SOCIALGRAPH_GOVERNANCE_LIVE_E2E = "1"
-            $env:SOCIALGRAPH_GOVERNANCE_RELEASE_GATE = "1"
-            $env:SOCIALGRAPH_GOVERNANCE_TARGET_CATALOG = (
-              Resolve-Path ./examples/governance/target-domain/governance-target-tasks.catalog.json
-            ).Path
-            npm --prefix apps/web run build:e2e
-            if ($LASTEXITCODE -ne 0) { throw "Complete runtime browser build failed" }
-            npm --prefix apps/web run test:e2e:nonrelease
-            if ($LASTEXITCODE -ne 0) { throw "Complete runtime browser gate failed" }
-            npm --prefix apps/web run test:e2e:governance-live
-            if ($LASTEXITCODE -ne 0) { throw "Dedicated live governance gate failed or did not pass" }
+            if (-not $gfm.servingReady -or $gfm.device -ne "cpu") { throw "CPU GFM is not serving-ready" }
+            $assistantNames = @(
+              "answer_governance_question",
+              "summarize_node_evidence",
+              "generate_global_situation_report",
+              "generate_account_evidence_report",
+              "generate_coordination_report",
+              "generate_case_review_draft"
+            )
+            if ($assistant.schemaVersion -ne "socialgraph-fm.product-skills.assistant/1.0" -or
+                $assistant.catalogHash -notmatch '^[0-9a-f]{64}$' -or
+                (@($assistant.items.name) -join ',') -ne ($assistantNames -join ',')) {
+              throw "Assistant Skill catalog mismatch"
+            }
+            if (@($skills.items).Count -ne 8) { throw "Governance Skill catalog mismatch" }
+            if ($web.StatusCode -ne 200 -or $web.Content -notmatch 'id="root"') {
+              throw "Prebuilt Web is unavailable or invalid"
+            }
+            python scripts/socialgraph.py doctor --test-llm --full --json
+            if ($LASTEXITCODE -ne 0) { throw "Full doctor failed" }
           }
           finally {
             python scripts/socialgraph.py stop
@@ -321,107 +295,3 @@ jobs:
           ./scripts/publication-check.ps1
           $dirty = @(git status --porcelain)
           if ($dirty.Count -ne 0) { throw "Quickstart changed tracked files: $($dirty -join ', ')" }
-
-  clean-clone-ubuntu-cpu:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: SocialGraph-FM
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-      - name: Complete managed CPU runtime quickstart and clean shutdown
-        working-directory: SocialGraph-FM
-        shell: bash
-        run: |
-          set -euo pipefail
-          mock_port=18991
-          python scripts/tests/mock_llm_provider.py --port "$mock_port" &
-          mock_pid=$!
-          cleanup() {
-            python scripts/socialgraph.py stop || true
-            kill "$mock_pid" 2>/dev/null || true
-            wait "$mock_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          for _ in $(seq 1 40); do
-            if curl --fail --silent "http://127.0.0.1:$mock_port/health" >/dev/null; then
-              break
-            fi
-            sleep 0.25
-          done
-          curl --fail --silent "http://127.0.0.1:$mock_port/health" >/dev/null
-
-          printf '%s\n' 'clean-clone-placeholder' | python scripts/socialgraph.py onboard \
-            --wheel-profile cpu \
-            --device-policy auto \
-            --env-mode managed \
-            --preset custom \
-            --api-base "http://127.0.0.1:$mock_port/v1" \
-            --model clean-clone-model \
-            --api-mode chat_completions \
-            --auth-scheme bearer \
-            --allow-insecure-loopback \
-            --api-key-stdin
-
-          api_python="$(python -c 'import json; print(json.load(open("var/config/runtime-profile.json", encoding="utf-8"))["interpreters"]["api"]["path"])')"
-          gfm_python="$(python -c 'import json; print(json.load(open("var/config/runtime-profile.json", encoding="utf-8"))["interpreters"]["gfm"]["path"])')"
-          "$api_python" -m pip freeze --all >"$RUNNER_TEMP/socialgraph-api-before.txt"
-          "$gfm_python" -m pip freeze --all >"$RUNNER_TEMP/socialgraph-gfm-before.txt"
-          python scripts/socialgraph.py setup --wheel-profile cpu --device-policy auto --env-mode reuse \
-            --api-python "$api_python" --gfm-python "$gfm_python" --skip-web
-          "$api_python" -m pip freeze --all >"$RUNNER_TEMP/socialgraph-api-after.txt"
-          "$gfm_python" -m pip freeze --all >"$RUNNER_TEMP/socialgraph-gfm-after.txt"
-          diff -u "$RUNNER_TEMP/socialgraph-api-before.txt" "$RUNNER_TEMP/socialgraph-api-after.txt"
-          diff -u "$RUNNER_TEMP/socialgraph-gfm-before.txt" "$RUNNER_TEMP/socialgraph-gfm-after.txt"
-          npm --prefix apps/web exec -- playwright install --with-deps chromium
-
-          LLM_API_KEY=test-inherited-sentinel \
-          OPENAI_API_KEY=test-inherited-sentinel \
-          ANTHROPIC_API_KEY=test-inherited-sentinel \
-          DEEPSEEK_API_KEY=test-inherited-sentinel \
-          ZHIPUAI_API_KEY=test-inherited-sentinel \
-            python scripts/socialgraph.py start --llm-mode required --no-llm-prompt
-
-          python - <<'PY'
-          import json
-          import urllib.request
-
-          def read_json(url: str) -> dict:
-              with urllib.request.urlopen(url, timeout=15) as response:
-                  return json.load(response)
-
-          health = read_json("http://127.0.0.1:8000/api/v1/health")
-          capabilities = read_json("http://127.0.0.1:8000/api/v1/capabilities")
-          gfm = read_json("http://127.0.0.1:8000/api/v2/gfm/governance/health")
-          with urllib.request.urlopen("http://127.0.0.1:5173/", timeout=15) as response:
-              assert response.status == 200
-          assert health["status"] == "ok"
-          llm = capabilities["intentNormalization"]
-          assert llm["configured"] is True
-          assert llm["model"] == "clean-clone-model"
-          assert llm["connectionStatus"] == "call_succeeded"
-          assert gfm["servingReady"] is True
-          assert gfm["device"] == "cpu"
-          PY
-
-          test -f var/models/socialgraph-global/registry/socialgraph-global.json
-          test -f var/gfm/governance/knowledge/manifest.json
-          test -f var/gfm/governance/reviewed-cases/manifest.json
-          export SOCIALGRAPH_GOVERNANCE_LIVE_E2E=1
-          export SOCIALGRAPH_GOVERNANCE_RELEASE_GATE=1
-          export SOCIALGRAPH_GOVERNANCE_TARGET_CATALOG="$PWD/examples/governance/target-domain/governance-target-tasks.catalog.json"
-          npm --prefix apps/web run build:e2e
-          npm --prefix apps/web run test:e2e:nonrelease
-          npm --prefix apps/web run test:e2e:governance-live
-          python scripts/socialgraph.py stop
-          trap - EXIT
-          kill "$mock_pid" 2>/dev/null || true
-          wait "$mock_pid" 2>/dev/null || true
-          test -z "$(git status --porcelain)"

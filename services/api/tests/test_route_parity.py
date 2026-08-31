@@ -64,6 +64,7 @@ GET /api/v2/gfm/governance/runs/{run_id}/relations
 GET /api/v2/gfm/governance/runs/{run_id}/result
 GET /api/v2/gfm/governance/skill-audit/validation
 GET /api/v2/gfm/governance/skills
+GET /api/v2/gfm/governance/assistant/skills
 GET /api/v2/gfm/governance/target-tasks/{registration_id}
 POST /api/v1/dataset-artifacts/{artifact_id}/purge
 POST /api/v1/dataset-artifacts/{artifact_id}/restore
@@ -94,8 +95,7 @@ POST /api/v2/gfm/governance/adaptations/review-collections
 POST /api/v2/gfm/governance/artifacts
 POST /api/v2/gfm/governance/artifacts/compatibility
 POST /api/v2/gfm/governance/artifacts/{artifact_id}/materialize
-POST /api/v2/gfm/governance/assistant/dispatch
-POST /api/v2/gfm/governance/assistant/turn
+POST /api/v2/gfm/governance/assistant/execute
 POST /api/v2/gfm/governance/case-index/backfill
 POST /api/v2/gfm/governance/cases
 POST /api/v2/gfm/governance/cases/{case_id}/items

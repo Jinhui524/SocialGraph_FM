@@ -221,8 +221,8 @@ export interface GovernanceOnlineWorkspaceProps {
   /** Mounted inside the stable candidate region so opening the assistant never
    * inserts a new row above the workbench. */
   readonly assistantPanel?: ReactNode;
-  /** Optional LLM organizer for node evidence. Structured evidence remains
-   * available when this service is absent or unavailable. */
+  /** Required LLM organizer for node evidence. Runtime startup verifies it;
+   * the optional prop only keeps isolated component tests dependency-free. */
   readonly evidenceSummaryClient?: GovernanceSkillsClientLike;
   /** App-level binding shared with the conversation workspace. */
   readonly sessionId?: string;

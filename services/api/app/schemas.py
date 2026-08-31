@@ -23,14 +23,14 @@ AnalysisTask = Literal[
     "node_role",
     "similar_structure",
 ]
-IntentSource = Literal["llm", "deterministic_fallback"]
+IntentSource = Literal["llm"]
 GraphViewMode = Literal["global", "local", "path"]
 LayoutPreset = Literal["balanced", "compact", "spread"]
 AnalysisOverlay = Literal["degree", "articulation", "components", "community"]
 FilterValue: TypeAlias = StrictStr | StrictInt | StrictFloat | StrictBool
 ColumnDataType = Literal["string", "integer", "float", "boolean", "datetime", "unknown"]
 GraphDirectedness = Literal["directed", "undirected", "unspecified"]
-GraphBuildSource = Literal["llm", "deterministic_fallback"]
+GraphBuildSource = Literal["llm"]
 
 
 class ApiModel(BaseModel):
@@ -290,14 +290,14 @@ class HealthResponse(ApiModel):
 
 class IntentNormalizationCapability(ApiModel):
     configured: bool
-    mode: Literal["llm_with_fallback", "deterministic_fallback"]
+    mode: Literal["llm_required"] = "llm_required"
     provider: Literal["openai_compatible"] | None = None
     model: str | None = None
-    api_mode: Literal[
-        "responses", "chat_completions", "anthropic_messages"
-    ] = Field(alias="apiMode")
+    api_mode: Literal["chat_completions"] = Field(
+        alias="apiMode", default="chat_completions"
+    )
     connection_status: Literal[
-        "configured_unverified", "call_succeeded", "fallback"
+        "not_configured", "configured_unverified", "call_succeeded", "error"
     ] = Field(alias="connectionStatus")
 
 

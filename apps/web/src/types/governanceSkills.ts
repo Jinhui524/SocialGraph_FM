@@ -1,5 +1,11 @@
 import type { GovernanceOnlineRun } from "./governanceOnline";
 import {
+  ASSISTANT_PRODUCT_SKILL_NAMESPACE,
+  ASSISTANT_PUBLIC_SKILLS,
+  ASSISTANT_SKILLS_SCHEMA,
+  ASSISTANT_SKILL_REQUEST_SCHEMA,
+  ASSISTANT_SKILL_RESULT_SCHEMA,
+  ASSISTANT_SKILL_POLICIES,
   GOVERNANCE_CONFIRMATION_GATED_SKILLS,
   GOVERNANCE_PRODUCT_SKILL_NAMESPACE,
   GOVERNANCE_PUBLIC_SKILLS,
@@ -12,10 +18,13 @@ import {
   type GeneratedGovernanceSkillParams,
 } from "../generated/governanceSkillsContract";
 
-export const GOVERNANCE_ASSISTANT_SCHEMA = "socialgraph-fm.governance-assistant/1.0" as const;
-export const GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA = "socialgraph-fm.governance-assistant-dispatch/1.0" as const;
-
 export {
+  ASSISTANT_PRODUCT_SKILL_NAMESPACE,
+  ASSISTANT_PUBLIC_SKILLS,
+  ASSISTANT_SKILLS_SCHEMA,
+  ASSISTANT_SKILL_REQUEST_SCHEMA,
+  ASSISTANT_SKILL_RESULT_SCHEMA,
+  ASSISTANT_SKILL_POLICIES,
   GOVERNANCE_CONFIRMATION_GATED_SKILLS,
   GOVERNANCE_PRODUCT_SKILL_NAMESPACE,
   GOVERNANCE_PUBLIC_SKILLS,
@@ -30,12 +39,10 @@ export type GovernanceSkillParameters = GeneratedGovernanceSkillParameters;
 export type GovernanceSkillParams<Name extends GovernanceSkillName> =
   GeneratedGovernanceSkillParams<Name>;
 export type GovernanceConfirmationAction = "run_governance_analysis" | "save_draft_report" | "submit_review";
-export type GovernanceAssistantDispatchIntent = "answer" | "start_analysis" | "open_review" | "submit_review" | "draft_report";
-export type GovernanceAnswerMode = "overview" | "analysis_summary" | "coordination_summary" | "evidence_requirements" | "review_guidance" | "method_scope" | "knowledge" | "case_draft";
 export type GovernanceTargetKind = "node" | "relation" | "group";
-export type GovernanceAssistantGenerationMode = "llm_assisted" | "deterministic_report";
-export type GovernanceAssistantFallbackPhase = "intent" | "planning" | "skill_execution" | "narration";
 export type GovernanceAssistantEvidenceSource = "graph" | "skill" | "knowledge" | "case";
+
+export type AssistantSkillName = typeof ASSISTANT_PUBLIC_SKILLS[number];
 
 export interface GovernanceSkillsContext {
   readonly graph: {
@@ -131,36 +138,31 @@ export type GovernanceSkillConfirmationResponse =
       readonly auditHash: string;
     };
 
-export interface GovernanceAssistantDispatchContext {
-  readonly intent?: "answer";
-  readonly answerMode?: GovernanceAnswerMode;
-  readonly narrationMode?: "auto" | "deterministic_only";
-  readonly topK?: number;
-  readonly reviewDecision?: "confirmed" | "rejected" | "pending";
-  readonly reviewReason?: string;
+export interface AssistantSkillDescriptor {
+  readonly name: AssistantSkillName;
+  readonly label: string;
+  readonly description: string;
+  readonly uiLocation: string;
+  readonly readOnly: true;
+  readonly confirmationRequired: false;
+  readonly governanceSkills: readonly GovernanceReadOnlySkillName[];
+  readonly parameterSchema: Readonly<Record<string, unknown>>;
 }
 
-export interface GovernanceAssistantDispatchResponse {
-  readonly schemaVersion: typeof GOVERNANCE_ASSISTANT_DISPATCH_SCHEMA;
-  readonly dispatchId: string;
-  readonly intent: GovernanceAssistantDispatchIntent;
-  readonly answerMode: GovernanceAnswerMode | null;
-  readonly status: "completed" | "confirmation_required" | "blocked";
+export interface AssistantSkillCatalog {
+  readonly schemaVersion: typeof ASSISTANT_SKILLS_SCHEMA;
+  readonly items: readonly AssistantSkillDescriptor[];
+  readonly catalogHash: string;
+}
+
+export interface AssistantSkillResult {
+  readonly schemaVersion: typeof ASSISTANT_SKILL_RESULT_SCHEMA;
+  readonly executionId: string;
+  readonly skill: AssistantSkillName;
   readonly answer: string;
   readonly result: Readonly<Record<string, unknown>>;
-  readonly deterministicFallback: boolean;
-  readonly generationMode?: GovernanceAssistantGenerationMode;
-  readonly fallbackPhase?: GovernanceAssistantFallbackPhase | null;
-  readonly reasonCode?: string | null;
-  readonly evidenceRefs?: readonly GovernanceAssistantEvidenceRef[];
-  readonly confirmation: GovernanceConfirmationTicket | null;
-  readonly navigation: {
-    readonly view: "governance_review";
-    readonly runId: string;
-    readonly caseId?: string;
-    readonly target?: { readonly targetType: GovernanceTargetKind; readonly targetId: string };
-  } | null;
   readonly skillCalls: readonly GovernanceAssistantSkillTrace[];
+  readonly evidenceRefs: readonly GovernanceAssistantEvidenceRef[];
   readonly citedHashes: readonly string[];
   readonly auditHash: string;
 }
@@ -175,16 +177,6 @@ export interface GovernanceAssistantSkillTrace {
   readonly skill: GovernanceReadOnlySkillName;
   readonly requestHash: string;
   readonly resultHash: string;
-}
-
-export interface GovernanceAssistantTurnResponse {
-  readonly schemaVersion: typeof GOVERNANCE_ASSISTANT_SCHEMA;
-  readonly turnId: string;
-  readonly answer: string;
-  readonly deterministicFallback: boolean;
-  readonly skillCalls: readonly GovernanceAssistantSkillTrace[];
-  readonly citedHashes: readonly string[];
-  readonly auditHash: string;
 }
 
 export interface GovernanceCaseKindEntry {
@@ -233,17 +225,13 @@ export interface GovernanceSkillsClientLike {
     signal?: AbortSignal,
   ): Promise<GovernanceSkillExecutionResponse>;
   confirmSkill(token: string, signal?: AbortSignal): Promise<GovernanceSkillConfirmationResponse>;
-  assistantTurn(
+  assistantCatalog(signal?: AbortSignal): Promise<AssistantSkillCatalog>;
+  executeAssistant(
     context: GovernanceSkillsContext,
+    skill: AssistantSkillName,
     message: string,
     signal?: AbortSignal,
-  ): Promise<GovernanceAssistantTurnResponse>;
-  dispatchAssistant(
-    context: GovernanceSkillsContext,
-    message: string,
-    options?: GovernanceAssistantDispatchContext,
-    signal?: AbortSignal,
-  ): Promise<GovernanceAssistantDispatchResponse>;
+  ): Promise<AssistantSkillResult>;
   searchKnowledge(
     context: GovernanceSkillsContext,
     query: string,
