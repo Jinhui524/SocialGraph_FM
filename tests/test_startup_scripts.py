@@ -183,6 +183,28 @@ def test_ci_and_repository_have_no_public_cuda_or_macos_workflow() -> None:
     assert not (PROJECT_ROOT / "packages" / "gfm" / "Dockerfile").exists()
 
 
+def test_retired_configuration_and_cuda_wrappers_do_not_return() -> None:
+    for relative in (
+        ".env.example",
+        "apps/web/.env.example",
+        "apps/web/.gitignore",
+        "services/api/.env.example",
+        "services/api/.gitignore",
+        "packages/gfm/.dockerignore",
+        "packages/gfm/scripts/Invoke-GfmDevAfterEmbedding.ps1",
+        "packages/gfm/scripts/Invoke-OgblCollabBaseline.ps1",
+        "packages/gfm/scripts/gfm_dev_checkpoint_compat.py",
+    ):
+        assert not (PROJECT_ROOT / relative).exists(), relative
+    assert "!**/.env.example" not in _read(".gitignore")
+
+    serving_cli = _read("packages/gfm/src/socialgraph_gfm/core/inference_cli.py")
+    runtime = _read("packages/runtime/src/socialgraph_fm_runtime/operations.py")
+    assert "--global-model-device" not in serving_cli
+    assert "--global-model-device" not in runtime
+    assert 'device="cpu"' in serving_cli
+
+
 def test_ci_uses_the_platform_specific_gfm_cpu_locks() -> None:
     workflow = _read(".github/workflows/ci.yml")
     ubuntu_job = workflow.split("  gfm-ubuntu-cpu:\n", 1)[1].split(

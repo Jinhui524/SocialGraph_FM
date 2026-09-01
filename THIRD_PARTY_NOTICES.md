@@ -31,5 +31,6 @@ Credentials provenance metadata.
 
 Resolved versions are recorded in the npm and Python lock files. Direct dependencies
 include React, Vite, AntV G6/G, Graphology, Dexie, FastAPI, HTTPX, Pydantic, Uvicorn,
-NumPy, PyTorch, PyTorch Geometric, pyg-lib, and OGB. Each dependency retains its own
-copyright and license.
+NumPy, PyTorch, PyTorch Geometric, and pyg-lib. OGB is an optional research-only
+dependency and is not installed by the public `onboard` command. Each dependency
+retains its own copyright and license.

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "socialgraph-fm-gfm"
 version = "0.1.0"
-description = "Contract-first, fail-closed infrastructure for SocialGraph-FM GFM experiments"
+description = "Contract-first GFM serving, governance, and research infrastructure for SocialGraph-FM"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 authors = [{ name = "SocialGraph-FM" }]

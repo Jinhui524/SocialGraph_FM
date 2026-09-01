@@ -8,8 +8,9 @@ from types import SimpleNamespace
 import pytest
 
 from socialgraph_fm_runtime import operations
-from socialgraph_fm_runtime.environment import CompatibilityResult
+from socialgraph_fm_runtime.environment import BytecodePruneResult, CompatibilityResult
 from socialgraph_fm_runtime.layout import RuntimeLayout, environment_python
+from socialgraph_fm_runtime.profile import RuntimeProfile
 
 
 def _result(python: Path) -> CompatibilityResult:
@@ -41,8 +42,10 @@ def test_provider_check_injects_key_only_into_api_child(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     captured: dict[str, str] = {}
+    command: list[str] = []
 
-    def fake_run(_command, *, environment, **_kwargs):
+    def fake_run(selected, *, environment, **_kwargs):
+        command.extend(selected)
         captured.update(environment)
         return SimpleNamespace(
             returncode=0,
@@ -73,6 +76,7 @@ def test_provider_check_injects_key_only_into_api_child(
         "LLM_API_KEY",
         "LLM_MODEL",
     }
+    assert command[1:3] == ["-B", "-m"]
 
 
 def test_provider_check_surfaces_only_safe_failure_category(
@@ -133,7 +137,9 @@ def test_two_services_share_one_python_but_only_api_receives_key(
     assert services[1].environment["SOCIALGRAPH_WEB_CLIENT_ROOT"] == str(
         layout.web_client_root
     )
-    assert services[0].arguments[services[0].arguments.index("--global-model-device") + 1] == "cpu"
+    assert services[0].arguments[:2] == ("-B", "-m")
+    assert services[1].arguments[:2] == ("-B", "-m")
+    assert "--global-model-device" not in services[0].arguments
 
 
 def _patch_setup(
@@ -172,6 +178,11 @@ def _patch_setup(
     monkeypatch.setattr(operations, "install_runtime_environment", fake_install)
     monkeypatch.setattr(
         operations,
+        "prune_runtime_bytecode",
+        lambda _python: BytecodePruneResult(removed_files=0, removed_bytes=0),
+    )
+    monkeypatch.setattr(
+        operations,
         "install_web_bundle",
         lambda _layout: {"fileCount": 1, "totalBytes": 1},
     )
@@ -207,6 +218,219 @@ def test_setup_builds_temp_then_switches_one_runtime_and_runs_callback(
     assert Path(runtime.interpreter["path"]) == environment_python(layout.runtime_environment)
     assert runtime.install_profile_id == "windows-x86_64-cpu-pt28"
     assert layout.profile_file.is_file()
+
+
+def test_new_runtime_is_pruned_and_probed_before_russia_and_activation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    _patch_setup(monkeypatch, layout)
+    events: list[str] = []
+    installed = operations.install_runtime_environment
+    probed = operations.probe_runtime_environment
+
+    def record_install(*args, **kwargs):
+        events.append("install")
+        return installed(*args, **kwargs)
+
+    def record_prune(_python: Path) -> BytecodePruneResult:
+        events.append("prune")
+        return BytecodePruneResult(removed_files=2, removed_bytes=128)
+
+    def record_probe(python: Path, profile) -> CompatibilityResult:
+        events.append(
+            "probe-active"
+            if Path(python) == environment_python(layout.runtime_environment)
+            else "probe-staging"
+        )
+        return probed(python, profile)
+
+    def record_russia(*_args, **_kwargs) -> dict[str, bool]:
+        events.append("russia")
+        return {"passed": True}
+
+    def record_checkpoints(*_args, **_kwargs) -> dict[str, list[object]]:
+        events.append("checkpoints")
+        return {"protocols": []}
+
+    monkeypatch.setattr(operations, "install_runtime_environment", record_install)
+    monkeypatch.setattr(operations, "prune_runtime_bytecode", record_prune)
+    monkeypatch.setattr(operations, "probe_runtime_environment", record_probe)
+    monkeypatch.setattr(
+        operations,
+        "run_full_gfm_probe",
+        record_russia,
+    )
+    monkeypatch.setattr(
+        operations,
+        "run_checkpoint_forward_probe",
+        record_checkpoints,
+    )
+
+    operations.setup(layout)
+
+    assert events == [
+        "install",
+        "prune",
+        "probe-staging",
+        "russia",
+        "probe-active",
+        "checkpoints",
+    ]
+
+
+def test_existing_runtime_is_pruned_reprobed_without_reinstalling_or_losing_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    _patch_setup(monkeypatch, layout)
+    python = environment_python(layout.runtime_environment)
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text("python", encoding="utf-8")
+    state_files = (
+        layout.llm_config_file,
+        layout.model_root / "preserved-model.bin",
+        layout.governance_root / "reviewed-cases" / "preserved-case.json",
+    )
+    for path in state_files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("preserved", encoding="utf-8")
+    previous = RuntimeProfile.create(
+        install_profile_id="windows-x86_64-cpu-pt28",
+        platform={"system": "windows", "machine": "x86_64"},
+        interpreter={
+            "path": str(python),
+            "installLockSha256": "a" * 64,
+            "fingerprint": _result(python).fingerprint,
+        },
+    )
+    events: list[str] = []
+
+    def record_prune(_python: Path) -> BytecodePruneResult:
+        events.append("prune")
+        return BytecodePruneResult(removed_files=3, removed_bytes=256)
+
+    def record_reprobe(_python: Path, _profile) -> CompatibilityResult:
+        events.append("reprobe")
+        return _result(python)
+
+    def record_russia(*_args, **_kwargs) -> dict[str, bool]:
+        events.append("russia")
+        return {"passed": True}
+
+    def record_checkpoints(*_args, **_kwargs) -> dict[str, list[object]]:
+        events.append("checkpoints")
+        return {"protocols": []}
+
+    monkeypatch.setattr(RuntimeProfile, "load", lambda _path: previous)
+    monkeypatch.setattr(
+        operations,
+        "_validate_recorded_runtime",
+        lambda *_args: (python, _result(python)),
+    )
+    monkeypatch.setattr(
+        operations,
+        "install_runtime_environment",
+        lambda *_args, **_kwargs: pytest.fail("existing runtime must not be reinstalled"),
+    )
+    monkeypatch.setattr(
+        operations,
+        "prune_runtime_bytecode",
+        record_prune,
+    )
+    monkeypatch.setattr(
+        operations,
+        "probe_runtime_environment",
+        record_reprobe,
+    )
+    monkeypatch.setattr(
+        operations,
+        "run_full_gfm_probe",
+        record_russia,
+    )
+    monkeypatch.setattr(
+        operations,
+        "run_checkpoint_forward_probe",
+        record_checkpoints,
+    )
+
+    operations.setup(layout)
+
+    assert events == ["prune", "reprobe", "russia", "checkpoints"]
+    assert all(path.read_text(encoding="utf-8") == "preserved" for path in state_files)
+
+
+@pytest.mark.parametrize("failure", ["prune", "probe"])
+def test_existing_runtime_reuse_failure_builds_a_verified_staging_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    _patch_setup(monkeypatch, layout, existing=True)
+    active_python = environment_python(layout.runtime_environment)
+    active_python.parent.mkdir(parents=True, exist_ok=True)
+    active_python.write_text("old-python", encoding="utf-8")
+    previous = RuntimeProfile.create(
+        install_profile_id="windows-x86_64-cpu-pt28",
+        platform={"system": "windows", "machine": "x86_64"},
+        interpreter={
+            "path": str(active_python),
+            "installLockSha256": "a" * 64,
+            "fingerprint": _result(active_python).fingerprint,
+        },
+    )
+    events: list[str] = []
+    state = {"install_started": False}
+    staged_destinations: list[Path] = []
+    install = operations.install_runtime_environment
+
+    def record_install(*args, **kwargs):
+        state["install_started"] = True
+        staged_destinations.append(Path(kwargs["destination"]))
+        events.append("install")
+        return install(*args, **kwargs)
+
+    def fail_old_prune(python: Path) -> BytecodePruneResult:
+        if Path(python) == active_python and not state["install_started"]:
+            events.append("prune-old")
+            if failure == "prune":
+                raise RuntimeError("synthetic bytecode pruning failure")
+            return BytecodePruneResult(removed_files=1, removed_bytes=64)
+        events.append("prune-staging")
+        return BytecodePruneResult(removed_files=0, removed_bytes=0)
+
+    def fail_old_probe(python: Path, _profile) -> CompatibilityResult:
+        if Path(python) == active_python and not state["install_started"]:
+            events.append("probe-old")
+            if failure == "probe":
+                result = _result(active_python)
+                return CompatibilityResult(
+                    compatible=False,
+                    errors=("synthetic post-prune probe failure",),
+                    fingerprint=result.fingerprint,
+                )
+        events.append("probe-new")
+        return _result(Path(python))
+
+    monkeypatch.setattr(RuntimeProfile, "load", lambda _path: previous)
+    monkeypatch.setattr(
+        operations,
+        "_validate_recorded_runtime",
+        lambda *_args: (active_python, _result(active_python)),
+    )
+    monkeypatch.setattr(operations, "install_runtime_environment", record_install)
+    monkeypatch.setattr(operations, "prune_runtime_bytecode", fail_old_prune)
+    monkeypatch.setattr(operations, "probe_runtime_environment", fail_old_probe)
+
+    runtime = operations.setup(layout, operations.SetupOptions(full_probe=False))
+
+    assert events.count("install") == 1
+    assert "prune-staging" in events
+    assert staged_destinations and staged_destinations[0] != layout.runtime_environment
+    assert Path(runtime.interpreter["path"]) == active_python
+    assert not (layout.runtime_environment / "marker").exists()
+    setup_log = layout.setup_log_file.read_text(encoding="utf-8")
+    assert "Existing CPU runtime cannot be reused:" in setup_log
+    assert "installing the verified Windows/Ubuntu lock" in setup_log
 
 
 def test_failed_required_llm_callback_rolls_back_previous_runtime(

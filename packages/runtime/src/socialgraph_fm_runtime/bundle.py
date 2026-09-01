@@ -25,6 +25,7 @@ TARGET_EXAMPLE_NAMES = {
     "zero_shot": ("zeroShot", "target-domain-a-zero.sgtask.zip"),
     "few_shot": ("fewShot", "target-domain-b-few.sgtask.zip"),
 }
+KNOWLEDGE_SEED_FILES = frozenset({"knowledge.sqlite3", "manifest.json"})
 ALLOWED_ROOTS = (
     "bundles/models/socialgraph-global",
     "bundles/governance/knowledge",
@@ -427,6 +428,105 @@ def _staging_directory(parent: Path, _name: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=".sg-", suffix=".stage", dir=parent))
 
 
+def _is_link_or_reparse_point(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    try:
+        attributes = getattr(path.lstat(), "st_file_attributes", 0)
+    except OSError as error:
+        raise RuntimeError(f"Could not inspect immutable seed path: {path}") from error
+    return bool(attributes & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def _assert_exact_knowledge_seed(directory: Path) -> None:
+    """Require the two-file managed knowledge inventory before any replacement."""
+
+    if not directory.is_dir() or _is_link_or_reparse_point(directory):
+        raise RuntimeError(f"Knowledge seed is not a plain managed directory: {directory}")
+    try:
+        entries = tuple(directory.iterdir())
+    except OSError as error:
+        raise RuntimeError(f"Could not inspect knowledge seed: {directory}") from error
+    if {entry.name for entry in entries} != KNOWLEDGE_SEED_FILES:
+        raise RuntimeError(
+            "Knowledge seed refresh requires exactly knowledge.sqlite3 and manifest.json"
+        )
+    for entry in entries:
+        if _is_link_or_reparse_point(entry) or not entry.is_file():
+            raise RuntimeError(f"Knowledge seed contains a non-regular file: {entry}")
+
+
+def _refresh_knowledge_seed(
+    layout: RuntimeLayout,
+    assets: tuple[dict[str, Any], ...],
+    prefix: str,
+    destination: Path,
+) -> None:
+    """Atomically replace the exact immutable knowledge seed, with rollback."""
+
+    relative_inventory = {
+        _asset_relative(asset, prefix).as_posix() for asset in assets
+    }
+    if relative_inventory != KNOWLEDGE_SEED_FILES or len(assets) != len(
+        KNOWLEDGE_SEED_FILES
+    ):
+        raise RuntimeError(
+            "Knowledge seed refresh requires exactly knowledge.sqlite3 and manifest.json assets"
+        )
+    _assert_exact_knowledge_seed(destination)
+    try:
+        _verify_installed(assets, prefix, destination)
+    except RuntimeError:
+        pass
+    else:
+        return
+    staging = _staging_directory(destination.parent, destination.name)
+    layout.assert_safe_var_path(staging)
+    backup: Path | None = None
+    previous_moved = False
+    try:
+        _copy_assets(layout, assets, prefix, staging)
+        _verify_installed(assets, prefix, staging)
+        _assert_exact_knowledge_seed(staging)
+        backup = _staging_directory(destination.parent, destination.name)
+        backup.rmdir()
+        layout.assert_safe_var_path(backup)
+        try:
+            os.replace(destination, backup)
+            previous_moved = True
+            os.replace(staging, destination)
+            _verify_installed(assets, prefix, destination)
+            _assert_exact_knowledge_seed(destination)
+        except Exception as error:
+            if not previous_moved:
+                raise RuntimeError(
+                    "Knowledge seed refresh failed without changing the active seed"
+                ) from error
+            try:
+                if destination.exists():
+                    _assert_exact_knowledge_seed(destination)
+                    shutil.rmtree(destination)
+                if backup is None or not backup.exists():
+                    raise RuntimeError("Knowledge seed backup is missing")
+                os.replace(backup, destination)
+                previous_moved = False
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "Knowledge seed refresh failed and rollback could not be completed"
+                ) from rollback_error
+            raise RuntimeError(
+                "Knowledge seed refresh failed; the previous seed was restored"
+            ) from error
+        if backup is not None and backup.exists():
+            # The active replacement is verified. Failure to remove an inert hidden
+            # backup is cleanup debt and must not invalidate the active seed.
+            shutil.rmtree(backup, ignore_errors=True)
+            backup = None
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+
+
 def _invoke_model_cli(layout: RuntimeLayout, python: Path, root: Path, operation: str) -> None:
     arguments = {
         "verify": ("_verify-export", "--root", str(root)),
@@ -806,6 +906,7 @@ def install_seed(
     prefix: str,
     destination: Path,
     mutable: bool = False,
+    refresh_immutable: bool = False,
     predicate: Any | None = None,
 ) -> None:
     layout.assert_safe_var_path(destination)
@@ -816,6 +917,26 @@ def install_seed(
     )
     if not assets:
         raise RuntimeError(f"Runtime bundle has no {role} seed assets")
+    if refresh_immutable:
+        expected_destination = layout.governance_root / "knowledge"
+        if (
+            mutable
+            or role != "knowledge"
+            or prefix != "bundles/governance/knowledge"
+            or predicate is not None
+            or os.path.normcase(os.path.abspath(destination))
+            != os.path.normcase(os.path.abspath(expected_destination))
+        ):
+            raise RuntimeError("Immutable seed refresh is allowed only for Governance knowledge")
+        relative_inventory = {
+            _asset_relative(asset, prefix).as_posix() for asset in assets
+        }
+        if relative_inventory != KNOWLEDGE_SEED_FILES or len(assets) != len(
+            KNOWLEDGE_SEED_FILES
+        ):
+            raise RuntimeError(
+                "Knowledge seed refresh requires exactly knowledge.sqlite3 and manifest.json assets"
+            )
     marker = {
         "schemaVersion": SEED_INSTALL_SCHEMA,
         "bundleVersion": bundle.document["bundleVersion"],
@@ -836,6 +957,8 @@ def install_seed(
                 raise RuntimeError(f"Existing mutable seed is unmanaged: {destination}") from error
             if existing != marker:
                 raise RuntimeError(f"A different mutable seed is installed: {destination}")
+        elif refresh_immutable:
+            _refresh_knowledge_seed(layout, assets, prefix, destination)
         else:
             _verify_installed(assets, prefix, destination)
         return
@@ -860,6 +983,7 @@ def install_public_runtime_bundle(layout: RuntimeLayout, python: Path) -> Runtim
         role="knowledge",
         prefix="bundles/governance/knowledge",
         destination=layout.governance_root / "knowledge",
+        refresh_immutable=True,
     )
     install_seed(
         layout,

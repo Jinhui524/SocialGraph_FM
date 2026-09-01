@@ -2,7 +2,7 @@
 
 面向社交网络治理的本地图基础模型工作台：把真实 GFM 推理、关系证据、协同行为线索、案例检索和人工复核组织在同一套可追溯流程中。
 
-![SocialGraph-FM 界面](apps/web/public/assets/socialgraph-atlas-light.webp)
+![SocialGraph-FM 社交图谱视觉背景](apps/web/public/assets/socialgraph-atlas-light.webp)
 
 > 模型分数只用于安排人工复核顺序，不证明账号身份、意图或违规事实，也不能作为自动处置依据。
 

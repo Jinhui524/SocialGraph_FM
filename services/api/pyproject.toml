@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "socialgraph-fm-api"
 version = "0.1.0"
-description = "A narrow LLM intent-normalization gateway for SocialGraph-FM."
-readme = { text = "Torch-free FastAPI gateway for SocialGraph-FM.", content-type = "text/plain" }
+description = "Local API, governed LLM boundary, and static Web host for SocialGraph-FM."
+readme = { text = "Torch-free FastAPI governance service for SocialGraph-FM.", content-type = "text/plain" }
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -211,8 +213,11 @@ def run_clean_python(
     cwd: Path | None = None,
     timeout: int = 120,
 ) -> subprocess.CompletedProcess[str]:
+    selected_arguments = tuple(arguments)
+    if selected_arguments[:1] != ("-B",):
+        selected_arguments = ("-B", *selected_arguments)
     return run_captured_process(
-        [str(python), *arguments],
+        [str(python), *selected_arguments],
         cwd=cwd,
         environment=clean_process_environment(python_path=python_path),
         timeout=timeout,
@@ -546,7 +551,18 @@ def _pip_install(
     if logger is not None:
         logger(f"CPU runtime dependency installation started: {python}")
     run_streaming_process(
-        [str(python), "-I", "-m", "pip", "--isolated", "install", *arguments],
+        [
+            str(python),
+            "-B",
+            "-I",
+            "-m",
+            "pip",
+            "--isolated",
+            "install",
+            "--no-compile",
+            "--no-cache-dir",
+            *arguments,
+        ],
         cwd=cwd,
         environment=clean_process_environment(),
         timeout=1800,
@@ -563,6 +579,135 @@ def _purelib(python: Path) -> Path:
     if completed.returncode != 0:
         raise RuntimeError("Could not locate the managed runtime site-packages")
     return Path(completed.stdout.strip())
+
+
+@dataclass(frozen=True)
+class BytecodePruneResult:
+    """Private setup statistics for safely removable Python bytecode."""
+
+    removed_files: int
+    removed_bytes: int
+
+
+def _is_link_or_reparse_point(path: Path) -> bool:
+    """Inspect a path itself without following a link or Windows reparse point."""
+
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise RuntimeError(f"Could not inspect managed runtime path: {path}") from error
+    if stat.S_ISLNK(metadata.st_mode):
+        return True
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(getattr(metadata, "st_file_attributes", 0) & reparse_flag)
+
+
+def _safe_unlinked_member(path: Path, root: Path, resolved_root: Path) -> bool:
+    """Return whether an existing path is contained without a linked component."""
+
+    absolute = Path(os.path.abspath(path))
+    try:
+        absolute.relative_to(root)
+    except ValueError:
+        return False
+    current = absolute
+    while True:
+        if _is_link_or_reparse_point(current):
+            return False
+        if current == root:
+            break
+        parent = current.parent
+        if parent == current:
+            return False
+        current = parent
+    try:
+        absolute.resolve(strict=True).relative_to(resolved_root)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _bytecode_source(
+    cache: Path, *, purelib: Path, resolved_purelib: Path
+) -> Path | None:
+    if not _safe_unlinked_member(cache, purelib, resolved_purelib):
+        return None
+    try:
+        source = Path(importlib.util.source_from_cache(str(cache)))
+    except (TypeError, ValueError):
+        return None
+    if source.suffix.lower() != ".py" or not source.is_file():
+        return None
+    if not _safe_unlinked_member(source, purelib, resolved_purelib):
+        return None
+    return source
+
+
+def prune_runtime_bytecode(python: Path) -> BytecodePruneResult:
+    """Remove only source-backed ``__pycache__/*.pyc`` inside managed purelib.
+
+    The complete candidate inventory is validated before the first deletion. Linked,
+    reparse-point, sourceless, malformed, and escaped candidates are retained.
+    """
+
+    environment_root = Path(os.path.abspath(Path(python).parent.parent))
+    purelib = Path(os.path.abspath(_purelib(python)))
+    if not environment_root.is_dir() or not purelib.is_dir():
+        raise RuntimeError("Managed runtime or site-packages is missing")
+    try:
+        purelib.relative_to(environment_root)
+        resolved_environment = environment_root.resolve(strict=True)
+        resolved_purelib = purelib.resolve(strict=True)
+        resolved_purelib.relative_to(resolved_environment)
+    except (OSError, ValueError) as error:
+        raise RuntimeError("Managed runtime site-packages escapes its environment") from error
+    if not _safe_unlinked_member(purelib, environment_root, resolved_environment):
+        raise RuntimeError("Managed runtime site-packages cannot contain linked path components")
+
+    candidates: list[Path] = []
+    pending = [purelib]
+    while pending:
+        directory = pending.pop()
+        try:
+            children = tuple(directory.iterdir())
+        except OSError as error:
+            raise RuntimeError(f"Could not inspect managed runtime directory: {directory}") from error
+        for child in children:
+            if _is_link_or_reparse_point(child):
+                continue
+            if child.is_dir():
+                pending.append(child)
+            elif (
+                directory.name == "__pycache__"
+                and child.suffix.lower() == ".pyc"
+                and child.is_file()
+                and _bytecode_source(
+                    child, purelib=purelib, resolved_purelib=resolved_purelib
+                )
+                is not None
+            ):
+                candidates.append(child)
+
+    removed_files = 0
+    removed_bytes = 0
+    for candidate in sorted(candidates):
+        # Revalidate immediately before unlinking to fail closed if the tree changed.
+        if (
+            not candidate.is_file()
+            or _bytecode_source(
+                candidate, purelib=purelib, resolved_purelib=resolved_purelib
+            )
+            is None
+        ):
+            continue
+        try:
+            size = candidate.lstat().st_size
+            candidate.unlink()
+        except OSError as error:
+            raise RuntimeError(f"Could not remove managed runtime bytecode: {candidate}") from error
+        removed_files += 1
+        removed_bytes += size
+    return BytecodePruneResult(removed_files=removed_files, removed_bytes=removed_bytes)
 
 
 def prune_torch_build_assets(python: Path) -> tuple[str, ...]:

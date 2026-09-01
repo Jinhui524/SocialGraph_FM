@@ -161,8 +161,6 @@ def test_windows_scripts_have_no_workstation_specific_defaults():
         "Enter-GfmRuntime.ps1",
         "Invoke-GfmCorpusContinue.ps1",
         "Invoke-GfmCorpusSetup.ps1",
-        "Invoke-GfmDevAfterEmbedding.ps1",
-        "Invoke-OgblCollabBaseline.ps1",
         "generate_locks.ps1",
     }
     legacy_root = repository_root / "scripts" / "legacy"
@@ -174,42 +172,6 @@ def test_windows_scripts_have_no_workstation_specific_defaults():
         lowered = script.lower()
         assert "\\users\\" not in lowered, script_path
         assert "/users/" not in lowered, script_path
-
-
-def test_dev_after_embedding_automation_is_bounded_to_dev_and_collaboration():
-    script = (
-        Path(__file__).resolve().parents[1]
-        / "scripts"
-        / "Invoke-GfmDevAfterEmbedding.ps1"
-    ).read_text(encoding="utf-8")
-    lowered = script.lower()
-    assert "gfm-text-embed" in lowered and "wikimedia-talk" in lowered
-    assert "gfm-task-assets" in lowered and '"collaboration"' in lowered
-    assert "gfm-pretrain" in lowered and '"dev"' in lowered
-    assert "socialgraph-core.json" in lowered
-    assert '"core-base"' in lowered and '"core-moe"' in lowered
-    assert "freephysicalmemory" in lowered
-    assert "[validaterange(8, 64)]" in lowered
-    assert "$minimumfreememorygib = 8" in lowered
-    assert '"waiting-for-dev-memory"' in lowered
-    assert '"waiting-for-core-moe-memory"' in lowered
-    assert "$memorywaittimeoutminutes" in lowered
-    assert "start-sleep" in lowered
-    assert "[io.fileshare]::none" in lowered
-    assert "dev-after-wikimedia-embedding.owner.json" in lowered
-    assert "get-otherautomationprocesses" in lowered
-    assert "test-automationprocess" in lowered
-    assert "recoveredstaleownerattemptid" in lowered
-    assert "automationpid" in lowered and "attemptid" in lowered
-    assert "memorywaitdeadline" in lowered and "codehash" in lowered
-    assert "get-codeidentity" in lowered and "assert-codeidentity" in lowered
-    assert "code_identity_hash" in lowered
-    assert "refusing to overwrite its state" in lowered
-    assert "restart the automation explicitly" in lowered
-    assert '"--phase" "formal"' not in " ".join(lowered.split())
-    assert '"newcomer"' not in lowered
-    assert "gfm-evaluate" not in lowered
-    assert "gfm-adapt" not in lowered
 
 
 def test_gfm_runtime_secret_prompt_is_scoped_and_zeroes_unmanaged_buffers():

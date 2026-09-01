@@ -16,6 +16,8 @@
 
 API 在所有 `/api/` 路由之后挂载预构建静态站点和 SPA fallback。普通用户不会启动 Vite，也不会创建 `node_modules`。
 
+项目不会读取仓库根目录、Web 或 API 源码目录中的 `.env` 文件。LLM 配置只能通过 `onboard` 或 `configure-llm` 写入受保护的私有配置；服务路径、会话令牌和其他高级变量由统一 launcher 注入，普通用户不应手工维护。
+
 ## 平台与依赖
 
 | 平台 | 执行设备 | 发布状态 |
@@ -42,6 +44,15 @@ python -m pip install -e "packages/gfm[research,dev]"
 
 研究环境不受 runtime 管理，也不能作为发布运行环境复用。
 
+普通用户安装只使用以下两个平台锁，`onboard` 会自动选择，不提供 profile 选项：
+
+```text
+packages/gfm/locks/install-windows-x86_64-cpu-pt28.requirements.txt
+packages/gfm/locks/install-linux-x86_64-cpu-pt28.requirements.txt
+```
+
+`packages/gfm/locks/windows-cpu.requirements.txt` 和 `cpu-ci.requirements.txt` 用于各平台的完整 GFM CI／研究验证，包含用户运行不需要的测试或研究依赖，不会被公开 onboarding 安装。
+
 ## Onboarding 与生命周期
 
 ```console
@@ -56,12 +67,27 @@ python scripts/socialgraph.py configure-llm
 
 1. 验证 Windows/Ubuntu x64 与 Python 3.12；
 2. 按操作系统选择唯一 CPU lock；
-3. 在临时目录构建单一环境并运行 import/doctor/smoke；
-4. 验证模型、数据、Governance 索引和预构建 Web manifest；
-5. 验证三项 LLM 配置；
-6. 原子切换到 `var/runtime`，成功后清理旧 API/GFM 环境和 `node_modules`。
+3. 使用 `pip --no-compile --no-cache-dir` 在临时目录构建单一环境；
+4. 裁剪锁定版本允许删除的 Torch 编译资产与可由同目录源码重建的 `.pyc`；
+5. 运行 `pip check`、`NeighborLoader` 和四个 Russia 真实 forward；复用旧环境时执行同等的裁剪后复核；
+6. 新环境通过后原子切换到 `var/runtime`，安装并校验模型、数据、Governance 索引、案例、示例和预构建 Web；
+7. 完成四 checkpoint forward 和三字段 LLM 验证，写入 runtime profile 后才删除旧环境备份、旧 API/GFM 环境和 `node_modules`。
 
 安装或锁文件变化时不得就地改写当前可用环境。新 generation 验证失败时保留旧环境和用户的案件、模型、数据及私有配置。
+
+受管 Python 命令统一使用 `-B`，避免服务运行时重新生成 bytecode。复用版本和锁哈希均匹配的现有 runtime 时不会重新安装；服务停止后只对 `site-packages` 中可安全重建的 `.pyc` 做幂等裁剪。purelib 本身越界或包含链接时会 fail closed；单个无对应源码、格式异常、链接或 reparse point 候选会被保留并排除在删除清单外。该过程不会触碰模型、配置、案件或旧环境。
+
+如需为本地开发临时覆盖端口，必须在调用 launcher 的进程环境中显式设置 `SOCIALGRAPH_PUBLIC_PORT` 和 `SOCIALGRAPH_GFM_PORT`；项目不会从 `.env` 自动加载这些值。例如：
+
+```powershell
+$env:SOCIALGRAPH_PUBLIC_PORT = "15173"
+$env:SOCIALGRAPH_GFM_PORT = "18766"
+python scripts/socialgraph.py start  # 使用上述临时端口
+```
+
+```bash
+SOCIALGRAPH_PUBLIC_PORT=15173 SOCIALGRAPH_GFM_PORT=18766 python3 scripts/socialgraph.py start
+```
 
 `start` 不安装依赖，并在启动前再次验证 LLM。API/Web 或 GFM 任一进程未就绪时整体启动失败；`stop` 使用绑定 PID、启动时间、可执行文件和命令身份的记录终止受管进程。
 
@@ -125,9 +151,13 @@ Assistant 请求使用 `socialgraph-fm.assistant-skill-request/1.0`，明确指�
 ```text
 var/runtime/             唯一受管 Python 环境
 var/config/              私有三字段 LLM 配置
-var/run/                 PID、端口、令牌和生命周期记录
-var/logs/                脱敏日志
-var/state/               图谱、案件、复核和会话状态
+var/deploy/pids/         PID、端口和进程身份记录
+var/deploy/logs/         setup 与受管进程的脱敏日志
+var/gfm/core-runtime/    数据集、服务令牌、运行绑定和模型复核记录
+var/gfm/governance/      治理运行、案件、证据、知识与案例索引
+var/governance/          用户目标域适配输入
+var/models/              展开的 Global 模型资产
+var/web/client/          展开的预构建 Web
 var/examples/            onboarding 展开的用户示例
 ```
 

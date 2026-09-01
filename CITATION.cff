@@ -5,8 +5,9 @@ type: software
 authors:
   - name: "SocialGraph-FM contributors"
 abstract: >-
-  A Windows-first research workbench for deterministic social-graph analysis,
-  evidence-oriented human review, and governed Graph Foundation Model workflows.
+  A CPU-only research workbench for Windows x64 and Ubuntu x64, supporting
+  deterministic social-graph analysis, evidence-oriented human review, and
+  governed Graph Foundation Model workflows.
 license: Apache-2.0
 keywords:
   - graph foundation model

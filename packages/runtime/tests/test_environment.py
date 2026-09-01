@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -33,6 +35,40 @@ def test_clean_python_environment_removes_credentials_and_package_overrides(
     assert "LLM_API_KEY" not in clean
     assert "PIP_INDEX_URL" not in clean
     assert clean["PYTHONPATH"] == ""
+
+
+def test_clean_python_always_disables_bytecode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: list[str] = []
+
+    def fake_run(command, **_kwargs):
+        captured.extend(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(environment, "run_captured_process", fake_run)
+
+    environment.run_clean_python(Path(sys.executable), ("-I", "-c", "pass"), cwd=tmp_path)
+
+    assert captured[1:3] == ["-B", "-I"]
+
+
+def test_clean_python_import_does_not_create_bytecode(tmp_path: Path) -> None:
+    module = tmp_path / "clean_probe_fixture.py"
+    module.write_text("VALUE = 1\n", encoding="utf-8")
+    source = (
+        "import sys; "
+        f"sys.path.insert(0, {str(tmp_path)!r}); "
+        "import clean_probe_fixture; "
+        "assert clean_probe_fixture.VALUE == 1"
+    )
+
+    completed = environment.run_clean_python(
+        Path(sys.executable), ("-I", "-c", source), cwd=tmp_path
+    )
+
+    assert completed.returncode == 0
+    assert not (tmp_path / "__pycache__").exists()
 
 
 @pytest.mark.parametrize(
@@ -166,6 +202,96 @@ def test_managed_install_uses_one_hash_locked_binary_only_command(
     assert "--require-hashes" in calls[0]
     assert "--only-binary=:all:" in calls[0]
     assert "https://download.pytorch.org/whl/cpu" in calls[0]
+
+
+def test_pip_install_disables_bytecode_and_wheel_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: list[str] = []
+
+    def fake_run(command, **_kwargs):
+        captured.extend(command)
+
+    monkeypatch.setattr(environment, "run_streaming_process", fake_run)
+
+    environment._pip_install(
+        Path(sys.executable),
+        ("--require-hashes", "-r", "runtime.txt"),
+        cwd=tmp_path,
+    )
+
+    assert captured[1:3] == ["-B", "-I"]
+    assert "--no-compile" in captured
+    assert "--no-cache-dir" in captured
+    assert "--no-deps" not in captured
+
+
+def _bytecode_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    runtime = tmp_path / "runtime"
+    python = runtime / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    python.parent.mkdir(parents=True)
+    python.touch()
+    purelib = runtime / "site-packages"
+    package = purelib / "fixture"
+    package.mkdir(parents=True)
+    source = package / "module.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    cache = Path(importlib.util.cache_from_source(str(source)))
+    cache.parent.mkdir()
+    cache.write_bytes(b"source-backed-bytecode")
+    return python, purelib, cache
+
+
+def test_bytecode_pruning_is_source_backed_counted_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    python, purelib, cache = _bytecode_fixture(tmp_path)
+    orphan = cache.with_name("orphan.cpython-312.pyc")
+    orphan.write_bytes(b"retain-sourceless")
+    direct = purelib / "direct.pyc"
+    direct.write_bytes(b"retain-outside-pycache")
+    monkeypatch.setattr(environment, "_purelib", lambda _python: purelib)
+
+    first = environment.prune_runtime_bytecode(python)
+    second = environment.prune_runtime_bytecode(python)
+
+    assert first == environment.BytecodePruneResult(
+        removed_files=1, removed_bytes=len(b"source-backed-bytecode")
+    )
+    assert second == environment.BytecodePruneResult(removed_files=0, removed_bytes=0)
+    assert not cache.exists()
+    assert orphan.is_file()
+    assert direct.is_file()
+
+
+def test_bytecode_pruning_refuses_linked_candidates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    python, purelib, cache = _bytecode_fixture(tmp_path)
+    original = environment._is_link_or_reparse_point
+    monkeypatch.setattr(environment, "_purelib", lambda _python: purelib)
+    monkeypatch.setattr(
+        environment,
+        "_is_link_or_reparse_point",
+        lambda path: path == cache or original(path),
+    )
+
+    result = environment.prune_runtime_bytecode(python)
+
+    assert result == environment.BytecodePruneResult(removed_files=0, removed_bytes=0)
+    assert cache.is_file()
+
+
+def test_bytecode_pruning_rejects_purelib_outside_managed_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    python, _purelib, _cache = _bytecode_fixture(tmp_path)
+    outside = tmp_path / "outside-site-packages"
+    outside.mkdir()
+    monkeypatch.setattr(environment, "_purelib", lambda _python: outside)
+
+    with pytest.raises(RuntimeError, match="escapes"):
+        environment.prune_runtime_bytecode(python)
 
 
 def test_torch_pruning_removes_only_version_pinned_compiler_assets(

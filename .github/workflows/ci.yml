@@ -239,8 +239,22 @@ jobs:
             if ((Resolve-Path $runtimePython).Path -notlike "$(Resolve-Path ./var/runtime)*") {
               throw "Runtime interpreter is outside var/runtime"
             }
-            & $runtimePython -c "import importlib.util; assert importlib.util.find_spec('ogb') is None; assert importlib.util.find_spec('torch') is not None; assert importlib.util.find_spec('torch_geometric') is not None; assert importlib.util.find_spec('pyg_lib') is not None"
+            & $runtimePython -B -c "import importlib.util; required=('torch','torch_geometric','pyg_lib'); forbidden=('ogb','pandas','scipy','sklearn','transformers','FlagEmbedding','pytest','ruff','mypy','nvidia'); assert all(importlib.util.find_spec(name) is not None for name in required); assert all(importlib.util.find_spec(name) is None for name in forbidden)"
             if ($LASTEXITCODE -ne 0) { throw "Runtime dependency boundary failed" }
+            $previousPythonPath = $env:PYTHONPATH
+            try {
+              $env:PYTHONPATH = (Resolve-Path ./packages/runtime/src).Path
+              $bytecodeJson = & $runtimePython -B -c "import dataclasses,json,sys; from pathlib import Path; from socialgraph_fm_runtime.environment import prune_runtime_bytecode; print(json.dumps(dataclasses.asdict(prune_runtime_bytecode(Path(sys.argv[1]))),sort_keys=True))" $runtimePython
+              if ($LASTEXITCODE -ne 0) { throw "Managed bytecode idempotence probe failed" }
+            }
+            finally {
+              if ($null -eq $previousPythonPath) { Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue }
+              else { $env:PYTHONPATH = $previousPythonPath }
+            }
+            $bytecode = $bytecodeJson | ConvertFrom-Json
+            if ($bytecode.removed_files -ne 0 -or $bytecode.removed_bytes -ne 0) {
+              throw "Onboarding left $($bytecode.removed_files) rebuildable bytecode files"
+            }
             if (Test-Path ./apps/web/node_modules) { throw "Onboarding created node_modules" }
             if (-not (Test-Path ./var/web/client/index.html)) { throw "Prebuilt Web was not installed" }
             $privateNames = @(Get-Content ./var/config/socialgraph-api.env | ForEach-Object { ($_ -split '=', 2)[0] })

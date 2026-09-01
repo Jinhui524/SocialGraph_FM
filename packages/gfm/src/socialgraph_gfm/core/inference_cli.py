@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from socialgraph_gfm.global_model.service import GlobalServingRuntime
+from socialgraph_gfm.research.service import ResearchServingRuntime
 
 from .artifact_catalog import ArtifactCatalog
 from .inference_service import (
@@ -15,9 +16,8 @@ from .inference_service import (
     atomic_publish_session_token,
     create_server,
 )
-from .serving_registry import ServingRegistry
 from .serving_control import ServingControlStore
-from socialgraph_gfm.research.service import ResearchServingRuntime
+from .serving_registry import ServingRegistry
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -31,11 +31,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--research-root", type=Path)
     parser.add_argument("--global-model-root", type=Path)
     parser.add_argument("--governance-root", type=Path)
-    parser.add_argument(
-        "--global-model-device",
-        choices=("auto", "cuda", "cpu"),
-        default="auto",
-    )
     parser.add_argument("--dataset-store-root", type=Path)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
@@ -104,7 +99,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             governance_runtime = GovernanceServingRuntime(
                 arguments.governance_root,
                 global_model_root=model_root,
-                device=arguments.global_model_device,
+                device="cpu",
             )
             if governance_runtime.health().get("servingReady") is not True:
                 raise RuntimeError(

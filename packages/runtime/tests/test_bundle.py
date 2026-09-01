@@ -19,6 +19,254 @@ from socialgraph_fm_runtime.bundle import (
 from socialgraph_fm_runtime.layout import RuntimeLayout
 
 
+def _seed_bundle(
+    layout: RuntimeLayout,
+    *,
+    role: str,
+    prefix: str,
+    files: dict[str, bytes],
+    version: str,
+) -> RuntimeBundle:
+    assets = []
+    for name, content in files.items():
+        relative = f"{prefix}/{name}"
+        source = layout.project_root.joinpath(*relative.split("/"))
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(content)
+        assets.append(
+            {
+                "path": relative,
+                "role": role,
+                "bytes": len(content),
+                "sha256": file_sha256(source),
+            }
+        )
+    return RuntimeBundle({"bundleVersion": version}, tuple(assets), "0" * 64)
+
+
+def _knowledge_bundle(
+    layout: RuntimeLayout, *, database: bytes, manifest: bytes, version: str
+) -> RuntimeBundle:
+    return _seed_bundle(
+        layout,
+        role="knowledge",
+        prefix="bundles/governance/knowledge",
+        files={"knowledge.sqlite3": database, "manifest.json": manifest},
+        version=version,
+    )
+
+
+def _install_knowledge(
+    layout: RuntimeLayout, bundle: RuntimeBundle, destination: Path
+) -> None:
+    install_seed(
+        layout,
+        bundle,
+        role="knowledge",
+        prefix="bundles/governance/knowledge",
+        destination=destination,
+        refresh_immutable=True,
+    )
+
+
+def test_knowledge_seed_refresh_replaces_the_exact_two_file_inventory_atomically(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    destination = layout.governance_root / "knowledge"
+    original = _knowledge_bundle(
+        layout, database=b"old-database", manifest=b"old-manifest", version="old"
+    )
+    _install_knowledge(layout, original, destination)
+    updated = _knowledge_bundle(
+        layout, database=b"new-database", manifest=b"new-manifest", version="new"
+    )
+
+    _install_knowledge(layout, updated, destination)
+
+    assert (destination / "knowledge.sqlite3").read_bytes() == b"new-database"
+    assert (destination / "manifest.json").read_bytes() == b"new-manifest"
+    assert {path.name for path in destination.iterdir()} == {
+        "knowledge.sqlite3",
+        "manifest.json",
+    }
+    assert not tuple(destination.parent.glob(".sg-*"))
+    monkeypatch.setattr(
+        runtime_bundle.os,
+        "replace",
+        lambda *_args: pytest.fail("matching knowledge must not be replaced"),
+    )
+    _install_knowledge(layout, updated, destination)
+
+
+def test_knowledge_seed_refresh_rolls_back_when_atomic_activation_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    destination = layout.governance_root / "knowledge"
+    original = _knowledge_bundle(
+        layout, database=b"old-database", manifest=b"old-manifest", version="old"
+    )
+    _install_knowledge(layout, original, destination)
+    updated = _knowledge_bundle(
+        layout, database=b"new-database", manifest=b"new-manifest", version="new"
+    )
+    replace = runtime_bundle.os.replace
+    injected = False
+
+    def fail_activation(source, target) -> None:
+        nonlocal injected
+        if Path(target) == destination and Path(source) != destination and not injected:
+            injected = True
+            raise OSError("synthetic activation failure")
+        replace(source, target)
+
+    monkeypatch.setattr(runtime_bundle.os, "replace", fail_activation)
+
+    with pytest.raises(RuntimeError, match="previous seed was restored"):
+        _install_knowledge(layout, updated, destination)
+
+    assert injected
+    assert (destination / "knowledge.sqlite3").read_bytes() == b"old-database"
+    assert (destination / "manifest.json").read_bytes() == b"old-manifest"
+    assert not tuple(destination.parent.glob(".sg-*"))
+
+
+def test_knowledge_refresh_rejects_extra_existing_or_published_files(
+    tmp_path: Path,
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    destination = layout.governance_root / "knowledge"
+    original = _knowledge_bundle(
+        layout, database=b"old-database", manifest=b"old-manifest", version="old"
+    )
+    _install_knowledge(layout, original, destination)
+    extra = destination / "user-content.txt"
+    extra.write_bytes(b"must-not-delete")
+    updated = _knowledge_bundle(
+        layout, database=b"new-database", manifest=b"new-manifest", version="new"
+    )
+
+    with pytest.raises(RuntimeError, match="requires exactly"):
+        _install_knowledge(layout, updated, destination)
+
+    assert extra.read_bytes() == b"must-not-delete"
+    extra.unlink()
+    invalid = _seed_bundle(
+        layout,
+        role="knowledge",
+        prefix="bundles/governance/knowledge",
+        files={
+            "knowledge.sqlite3": b"new-database",
+            "manifest.json": b"new-manifest",
+            "unexpected.bin": b"not-approved",
+        },
+        version="invalid",
+    )
+    with pytest.raises(RuntimeError, match="assets"):
+        _install_knowledge(layout, invalid, destination)
+    assert (destination / "knowledge.sqlite3").read_bytes() == b"old-database"
+
+
+def test_other_immutable_seeds_still_refuse_changes_and_refresh_authority(
+    tmp_path: Path,
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    prefix = "examples/governance/russia"
+    destination = layout.governance_root / "answer-packs" / "russia"
+    original = _seed_bundle(
+        layout,
+        role="russia_example",
+        prefix=prefix,
+        files={"russia-01.zip": b"old"},
+        version="old",
+    )
+    install_seed(
+        layout,
+        original,
+        role="russia_example",
+        prefix=prefix,
+        destination=destination,
+    )
+    updated = _seed_bundle(
+        layout,
+        role="russia_example",
+        prefix=prefix,
+        files={"russia-01.zip": b"new"},
+        version="new",
+    )
+
+    with pytest.raises(RuntimeError, match="differs"):
+        install_seed(
+            layout,
+            updated,
+            role="russia_example",
+            prefix=prefix,
+            destination=destination,
+        )
+    with pytest.raises(RuntimeError, match="only for Governance knowledge"):
+        install_seed(
+            layout,
+            updated,
+            role="russia_example",
+            prefix=prefix,
+            destination=destination,
+            refresh_immutable=True,
+        )
+    assert (destination / "russia-01.zip").read_bytes() == b"old"
+
+
+@pytest.mark.parametrize(
+    ("role", "prefix", "destination_name", "mutable"),
+    [
+        (
+            "reviewed_cases",
+            "bundles/governance/reviewed-cases",
+            "reviewed-cases",
+            True,
+        ),
+        (
+            "target_domain_example",
+            "examples/governance/target-domain",
+            "target-inputs",
+            False,
+        ),
+    ],
+)
+def test_refresh_authority_excludes_mutable_cases_and_user_target_inputs(
+    tmp_path: Path,
+    role: str,
+    prefix: str,
+    destination_name: str,
+    mutable: bool,
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    bundle = _seed_bundle(
+        layout,
+        role=role,
+        prefix=prefix,
+        files={"fixture.bin": b"fixture"},
+        version="fixture",
+    )
+    destination = (
+        layout.target_input_root
+        if destination_name == "target-inputs"
+        else layout.governance_root / destination_name
+    )
+
+    with pytest.raises(RuntimeError, match="only for Governance knowledge"):
+        install_seed(
+            layout,
+            bundle,
+            role=role,
+            prefix=prefix,
+            destination=destination,
+            mutable=mutable,
+            refresh_immutable=True,
+        )
+    assert not destination.exists()
+
+
 def test_empty_legacy_seed_directory_is_replaced_atomically(tmp_path: Path) -> None:
     layout = RuntimeLayout(tmp_path)
     relative = (

@@ -246,7 +246,7 @@ def test_real_governance_unavailable_runtime_maps_service_error(
         thread.join(timeout=2)
 
 
-def test_cli_accepts_governance_root_and_device() -> None:
+def test_cli_accepts_governance_root_without_a_device_override() -> None:
     arguments = _parser().parse_args(
         [
             "--runtime-root",
@@ -265,12 +265,28 @@ def test_cli_accepts_governance_root_and_device() -> None:
             "global-model-runtime",
             "--governance-root",
             "governance",
-            "--global-model-device",
-            "cuda",
         ]
     )
     assert str(arguments.governance_root) == "governance"
     assert str(arguments.published_serving_root) == "published-serving"
     assert str(arguments.published_artifact_root) == "published-artifacts"
     assert str(arguments.global_model_root) == "global-model-runtime"
-    assert arguments.global_model_device == "cuda"
+    assert not hasattr(arguments, "global_model_device")
+
+
+def test_cli_rejects_the_retired_governance_device_override() -> None:
+    with pytest.raises(SystemExit):
+        _parser().parse_args(
+            [
+                "--runtime-root",
+                "runtime",
+                "--serving-control",
+                "control.json",
+                "--artifact-root",
+                "artifacts",
+                "--token-file",
+                "runtime/session.token",
+                "--global-model-device",
+                "cuda",
+            ]
+        )

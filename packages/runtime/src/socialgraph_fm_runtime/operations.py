@@ -34,6 +34,7 @@ from .environment import (
     normalized_platform,
     probe_bootstrap_environment,
     probe_runtime_environment,
+    prune_runtime_bytecode,
     resolve_python,
     select_install_profile,
 )
@@ -300,8 +301,27 @@ def setup(layout: RuntimeLayout, options: SetupOptions | None = None) -> Runtime
         runtime_python, runtime_result = _validate_recorded_runtime(
             layout, previous, profile
         )
+        bytecode = prune_runtime_bytecode(runtime_python)
+        reporter.log(
+            "Managed runtime bytecode pruning: "
+            f"{bytecode.removed_files} files, {bytecode.removed_bytes} bytes"
+        )
+        runtime_result = probe_runtime_environment(runtime_python, profile)
+        if not runtime_result.compatible:
+            raise RuntimeError(
+                "Managed CPU runtime failed verification after bytecode pruning: "
+                + ", ".join(runtime_result.errors)
+            )
+        _assert_fingerprint(previous.interpreter, runtime_result, "managed")
+        if bytecode.removed_files and selected_options.full_probe:
+            reporter.stage("CPU runtime: verifying Russia forwards after bytecode pruning")
+            report = run_full_gfm_probe(layout, runtime_python)
+            reporter.log(json.dumps(report, ensure_ascii=False, sort_keys=True))
         reporter.stage("CPU runtime: verified existing var/runtime")
-    except RuntimeError:
+    except RuntimeError as error:
+        reporter.log(f"Existing CPU runtime cannot be reused: {error}")
+        runtime_python = None
+        runtime_result = None
         reporter.stage("CPU runtime: installing the verified Windows/Ubuntu lock")
 
     backup: Path | None = None
@@ -321,6 +341,11 @@ def setup(layout: RuntimeLayout, options: SetupOptions | None = None) -> Runtime
                     profile,
                     destination=staging,
                     logger=reporter.progress,
+                )
+                bytecode = prune_runtime_bytecode(candidate)
+                reporter.log(
+                    "Managed runtime bytecode pruning: "
+                    f"{bytecode.removed_files} files, {bytecode.removed_bytes} bytes"
                 )
                 candidate_result = probe_runtime_environment(candidate, profile)
                 if not candidate_result.compatible:
@@ -444,6 +469,7 @@ def build_services(
         }
     )
     gfm_arguments = (
+        "-B",
         "-m",
         "socialgraph_gfm.core.inference_cli",
         "--runtime-root",
@@ -462,8 +488,6 @@ def build_services(
         str(layout.model_root),
         "--governance-root",
         str(layout.governance_root),
-        "--global-model-device",
-        "cpu",
         "--dataset-store-root",
         str(layout.dataset_store),
         "--token-file",
@@ -525,7 +549,7 @@ def build_services(
         "socialgraph-api",
         ports.api,
         api_python,
-        ("-m", "app", "--runtime-identity-root", str(layout.governance_root)),
+        ("-B", "-m", "app", "--runtime-identity-root", str(layout.governance_root)),
         layout.api_root,
         api_environment,
         ("-m", "app", "--runtime-identity-root", str(layout.governance_root)),
@@ -558,7 +582,7 @@ def test_llm_configuration(
     child_environment["PYTHONNOUSERSITE"] = "1"
     child_environment["PYTHONPATH"] = ""
     completed = run_captured_process(
-        [str(selected), "-m", "app.provider_check"],
+        [str(selected), "-B", "-m", "app.provider_check"],
         cwd=layout.api_root,
         environment=child_environment,
         timeout=25,
