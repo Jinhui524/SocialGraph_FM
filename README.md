@@ -2,7 +2,7 @@
 
 面向社交网络治理的本地图基础模型工作台：把真实 GFM 推理、关系证据、协同行为线索、案例检索和人工复核组织在同一套可追溯流程中。
 
-![SocialGraph-FM 项目视觉背景](apps/web/public/assets/socialgraph-atlas-light.webp)
+![SocialGraph-FM 项目视觉背景](apps/web/public/assets/socialgraph.webp)
 
 ## 🌟主要能力
 
