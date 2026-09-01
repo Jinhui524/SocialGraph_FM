@@ -2,7 +2,9 @@
 
 面向社交网络治理的本地图基础模型工作台：把真实 GFM 推理、关系证据、协同行为线索、案例检索和人工复核组织在同一套可追溯流程中。
 
-![SocialGraph-FM 社交图谱视觉背景](apps/web/public/assets/socialgraph-atlas-light.webp)
+![SocialGraph-FM 项目视觉背景](apps/web/public/assets/socialgraph-atlas-light.webp)
+
+_上图为项目视觉背景，不是系统运行截图。_
 
 > 模型分数只用于安排人工复核顺序，不证明账号身份、意图或违规事实，也不能作为自动处置依据。
 
@@ -17,28 +19,41 @@
 ## 环境要求
 
 - Windows x64 或 Ubuntu x64
-- CPython 3.12
-- 可访问的 OpenAI-compatible Chat Completions API
+- 64 位 CPython 3.12.x
+- 一个可用的大模型 API 与对应的模型 ID、API Key
 
-公开运行版固定使用 CPU。普通用户不需要 CUDA、Node.js、npm、Conda，也不需要自行安装训练或研究依赖。首次安装仍会下载 PyTorch CPU、PyG 和 `pyg-lib`，它们用于运行真实图模型与固定邻居采样，因此不能删除。
+公开运行版固定使用 CPU。普通用户不需要 CUDA、Node.js、npm、Conda，也不需要自行安装训练或研究依赖。`onboard` 会创建唯一的项目内隔离环境并安装锁定依赖；其中 PyTorch CPU、PyG 和 `pyg-lib` 用于真实图模型与固定邻居采样。
+
+项目支持任意符合上述平台要求的 CPython 3.12 补丁版本，但**不支持 3.12 以外的主／次版本**。当前安装锁、预编译 wheel、启动器和 CI 均以 3.12 为发布基线。
 
 ## 三步启动
 
-在仓库根目录执行（Ubuntu 可将 `python` 换成 `python3`）：
+1. 克隆仓库，或从 GitHub 选择 **Code → Download ZIP** 并解压：
+
+```console
+git clone https://github.com/Jinhui524/SocialGraph_FM.git
+cd SocialGraph_FM
+```
+
+2. 在仓库根目录完成环境与大模型配置（Ubuntu 可将 `python` 换成 `python3`）：
 
 ```console
 python scripts/socialgraph.py onboard
+```
+
+3. 启动系统：
+
+```console
 python scripts/socialgraph.py start
+```
+
+浏览器访问 `http://127.0.0.1:5173`。使用结束后停止受管进程：
+
+```console
 python scripts/socialgraph.py stop
 ```
 
-`onboard` 自动创建唯一的 `var/runtime` Python 环境、安装当前平台的 CPU 锁定依赖、校验模型和预构建 Web，并引导配置大模型。启动后访问：
-
-```text
-http://127.0.0.1:5173
-```
-
-也可以单独重新配置或检查：
+需要重新配置大模型或检查安装时运行：
 
 ```console
 python scripts/socialgraph.py configure-llm
@@ -47,7 +62,20 @@ python scripts/socialgraph.py doctor
 
 ## 配置大模型
 
-只需提供三项：
+向导先让用户选择服务商，再预填对应 API 地址。模型 ID 不设易过期的默认值，始终由用户从服务商控制台复制；API 地址仍可编辑。
+
+| 选择 | 服务商 | 预填 API 地址 |
+| ---: | --- | --- |
+| 1 | OpenAI 官方 | `https://api.openai.com/v1` |
+| 2 | DeepSeek 官方 | `https://api.deepseek.com` |
+| 3 | 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| 4 | Gemini OpenAI-compatible | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| 5 | MiniMax 中国 | `https://api.minimaxi.com/v1` |
+| 6 | MiniMax 国际 | `https://api.minimax.io/v1` |
+| 7 | OpenRouter | `https://openrouter.ai/api/v1` |
+| 8 | 自定义 OpenAI-compatible | 由用户填写 |
+
+无论选择哪一项，最终只需确认三项：
 
 ```text
 大模型 API 地址
@@ -55,9 +83,9 @@ python scripts/socialgraph.py doctor
 API Key
 ```
 
-系统固定使用 OpenAI-compatible Chat Completions、Bearer 鉴权、15 秒超时、温度 0 和最多 700 tokens。根地址、`/v1` 地址及完整 `/chat/completions` 地址会自动规范化。
+向导隐藏 API Key，并在保存前进行真实连通验证；验证失败不会保存。Qwen 业务空间用户可以把预填地址替换为控制台提供的专属 OpenAI-compatible 地址。现有中转服务继续通过“自定义 OpenAI-compatible”配置。
 
-远程服务必须使用 HTTPS；本机回环地址可使用 HTTP。配置向导会先进行真实连通验证，验证失败不会完成保存。API Key 写入 Git 忽略的私有配置，只注入 API 进程，不进入浏览器、GFM 进程、日志或 Git。
+OpenAI 官方配置需要从 [OpenAI API Platform](https://platform.openai.com/api-keys) 创建 API Key，并单独开通 API 用量；ChatGPT 或 Codex 的订阅、登录凭据不能替代 API Key。API Key 写入 Git 忽略的私有配置，只注入 API 进程，不进入浏览器、GFM 进程、日志或 Git。
 
 大模型是完整系统的必需组件。缺少配置、认证失败、模型不存在、限流、超时或返回非法结构时，相关问答与报告会明确失败，不会生成本地替代回答。
 

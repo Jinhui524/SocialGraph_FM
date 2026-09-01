@@ -35,8 +35,7 @@ def _request(system_prompt: str, user_prompt: str) -> dict[str, Any]:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0,
+        "stream": False,
         "max_tokens": 700,
     }
 

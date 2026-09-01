@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -11,6 +13,11 @@ from .config import Settings, derive_llm_endpoint
 
 logger = logging.getLogger(__name__)
 MAX_LLM_RESPONSE_BYTES = 2 * 1024 * 1024
+GEMINI_CLIENT_HEADER = "socialgraph-fm/1.0.0"
+MINIMAX_HOSTS = frozenset({"api.minimaxi.com", "api.minimax.io"})
+OPENROUTER_HOST = "openrouter.ai"
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
 
 
 class ProviderFailure(RuntimeError):
@@ -34,6 +41,33 @@ class IntentProvider(Protocol):
 
 def _endpoint_url(api_base: str) -> str:
     return derive_llm_endpoint(api_base)
+
+
+def _exact_hostname(url: str) -> str:
+    return (urlsplit(url).hostname or "").rstrip(".").lower()
+
+
+def _uses_completion_token_limit(model: str) -> bool:
+    last_segment = model.rsplit("/", 1)[-1].lower()
+    return last_segment.startswith("gpt-5") or bool(
+        re.fullmatch(r"o[1-9](?:[-._:].*)?", last_segment)
+    )
+
+
+def _is_minimax_m3(model: str) -> bool:
+    return model.rsplit("/", 1)[-1].lower().startswith("minimax-m3")
+
+
+def _strip_leading_think_blocks(content: str) -> str:
+    """Strip consecutive, completely closed reasoning blocks from the start only."""
+
+    cleaned = content.strip()
+    while cleaned.startswith(_THINK_OPEN):
+        close_index = cleaned.find(_THINK_CLOSE, len(_THINK_OPEN))
+        if close_index < 0:
+            break
+        cleaned = cleaned[close_index + len(_THINK_CLOSE) :].lstrip()
+    return cleaned
 
 
 def _extract_message_content(payload: Mapping[str, Any]) -> str:
@@ -60,7 +94,11 @@ def _extract_message_content(payload: Mapping[str, Any]) -> str:
 
 
 def _decode_json_object(content: str) -> dict[str, Any]:
-    cleaned = content.strip()
+    cleaned = _strip_leading_think_blocks(content)
+    if cleaned.startswith(_THINK_OPEN):
+        raise ProviderFailure(
+            "LLM_INVALID_RESPONSE", "LLM reasoning block was not completely closed"
+        )
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
         if lines and lines[0].startswith("```"):
@@ -128,6 +166,7 @@ class OpenAICompatibleProvider:
         assert settings.llm_model is not None
         self._model = settings.llm_model
         self._url = _endpoint_url(settings.llm_api_base)
+        self._hostname = _exact_hostname(self._url)
         self._api_key = settings.llm_api_key.get_secret_value()
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
@@ -208,14 +247,39 @@ class OpenAICompatibleProvider:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0,
-            "max_tokens": 700,
+            "stream": False,
         }
+        if self._hostname == "api.openai.com":
+            body.update({"max_completion_tokens": 700})
+        elif self._hostname == "api.deepseek.com":
+            body.update(
+                {
+                    "max_tokens": 700,
+                    "thinking": {"type": "disabled"},
+                }
+            )
+        elif self._hostname in MINIMAX_HOSTS:
+            body.update(
+                {
+                    "max_completion_tokens": 700,
+                    "reasoning_split": True,
+                }
+            )
+            if _is_minimax_m3(self._model):
+                body["thinking"] = {"type": "disabled"}
+        elif self._hostname == OPENROUTER_HOST:
+            body.update({"max_tokens": 700})
+        elif _uses_completion_token_limit(self._model):
+            body.update({"max_completion_tokens": 700})
+        else:
+            body.update({"max_tokens": 700})
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
             "Authorization": f"Bearer {self._api_key}",
         }
+        if self._hostname == "generativelanguage.googleapis.com":
+            headers["x-goog-api-client"] = GEMINI_CLIENT_HEADER
         try:
             response = await self._post_bounded(headers, body)
         except httpx.TimeoutException as exc:

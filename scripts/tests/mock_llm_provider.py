@@ -123,6 +123,15 @@ class _Handler(BaseHTTPRequestHandler):
         ):
             self._json(401, {"error": "unauthorized"})
             return
+        if (
+            request.get("stream") is not False
+            or request.get("max_tokens") != 700
+            or "max_completion_tokens" in request
+            or "temperature" in request
+            or "thinking" in request
+        ):
+            self._json(422, {"error": "invalid_generic_provider_contract"})
+            return
         try:
             result = _strict_result(request)
         except ValueError:

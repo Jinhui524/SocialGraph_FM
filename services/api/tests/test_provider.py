@@ -8,7 +8,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings, derive_llm_endpoint
-from app.provider import OpenAICompatibleProvider, ProviderFailure
+from app.provider import (
+    OpenAICompatibleProvider,
+    ProviderFailure,
+    _strip_leading_think_blocks,
+)
 
 
 def _settings(
@@ -32,6 +36,16 @@ def _settings(
         (
             "https://provider.example/openai/v1",
             "https://provider.example/openai/v1/chat/completions",
+        ),
+        ("https://api.deepseek.com", "https://api.deepseek.com/chat/completions"),
+        ("https://api.deepseek.com/v1", "https://api.deepseek.com/chat/completions"),
+        (
+            "https://api.deepseek.com/v1/chat/completions",
+            "https://api.deepseek.com/chat/completions",
+        ),
+        (
+            "https://api.deepseek.com.evil.example/v1",
+            "https://api.deepseek.com.evil.example/v1/chat/completions",
         ),
     ],
 )
@@ -113,9 +127,208 @@ async def test_provider_uses_fixed_chat_completions_contract_and_bearer_auth() -
             {"role": "system", "content": "system"},
             {"role": "user", "content": "user"},
         ],
-        "temperature": 0,
+        "stream": False,
         "max_tokens": 700,
     }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("api_base", "model", "expected_url", "expected_fields", "gemini_header"),
+    [
+        (
+            "https://api.openai.com/v1",
+            "gpt-4.1",
+            "https://api.openai.com/v1/chat/completions",
+            {"max_completion_tokens": 700},
+            None,
+        ),
+        (
+            "https://api.deepseek.com/v1",
+            "deepseek-chat",
+            "https://api.deepseek.com/chat/completions",
+            {"max_tokens": 700, "thinking": {"type": "disabled"}},
+            None,
+        ),
+        (
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "gemini-example",
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            {"max_tokens": 700},
+            "socialgraph-fm/1.0.0",
+        ),
+        (
+            "https://provider.example/v1",
+            "openai/gpt-5-mini",
+            "https://provider.example/v1/chat/completions",
+            {"max_completion_tokens": 700},
+            None,
+        ),
+        (
+            "https://provider.example/v1",
+            "openai/o3-mini",
+            "https://provider.example/v1/chat/completions",
+            {"max_completion_tokens": 700},
+            None,
+        ),
+        (
+            "https://openrouter.ai/api/v1",
+            "openai/o3:free",
+            "https://openrouter.ai/api/v1/chat/completions",
+            {"max_tokens": 700},
+            None,
+        ),
+        (
+            "https://openrouter.ai/api/v1",
+            "openai/gpt-5-mini",
+            "https://openrouter.ai/api/v1/chat/completions",
+            {"max_tokens": 700},
+            None,
+        ),
+        (
+            "https://api.minimaxi.com/v1",
+            "MiniMax-M3",
+            "https://api.minimaxi.com/v1/chat/completions",
+            {
+                "max_completion_tokens": 700,
+                "reasoning_split": True,
+                "thinking": {"type": "disabled"},
+            },
+            None,
+        ),
+        (
+            "https://api.minimax.io/v1",
+            "MiniMax-M2.1",
+            "https://api.minimax.io/v1/chat/completions",
+            {"max_completion_tokens": 700, "reasoning_split": True},
+            None,
+        ),
+        (
+            "https://api.openai.com.evil.example/v1",
+            "model-a",
+            "https://api.openai.com.evil.example/v1/chat/completions",
+            {"max_tokens": 700},
+            None,
+        ),
+        (
+            "https://api.deepseek.com.evil.example/v1",
+            "model-a",
+            "https://api.deepseek.com.evil.example/v1/chat/completions",
+            {"max_tokens": 700},
+            None,
+        ),
+        (
+            "https://generativelanguage.googleapis.com.evil.example/v1",
+            "model-a",
+            "https://generativelanguage.googleapis.com.evil.example/v1/chat/completions",
+            {"max_tokens": 700},
+            None,
+        ),
+    ],
+)
+async def test_provider_applies_exact_host_and_model_request_profiles(
+    api_base: str,
+    model: str,
+    expected_url: str,
+    expected_fields: dict[str, Any],
+    gemini_header: str | None,
+) -> None:
+    observed: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok":true}'}}]},
+        )
+
+    provider = OpenAICompatibleProvider(
+        _settings(api_base=api_base, model=model),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    assert await provider.generate("system", "user") == {"ok": True}
+    await provider.aclose()
+
+    request = observed[0]
+    assert str(request.url) == expected_url
+    body = json.loads(request.content)
+    assert body["stream"] is False
+    assert "temperature" not in body
+    assert ("max_tokens" in body) ^ ("max_completion_tokens" in body)
+    common_fields = {"model", "messages", "stream"}
+    assert {key: value for key, value in body.items() if key not in common_fields} == expected_fields
+    assert (request.headers.get("x-goog-api-client") or None) == gemini_header
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ('<think>private reasoning</think>{"ok":true}', '{"ok":true}'),
+        (
+            '<think>first</think>\n<think>second</think>\n{"ok":true}',
+            '{"ok":true}',
+        ),
+        (
+            'prefix <think>private reasoning</think>{"ok":true}',
+            'prefix <think>private reasoning</think>{"ok":true}',
+        ),
+        ('<think>not closed\n{"ok":true}', '<think>not closed\n{"ok":true}'),
+    ],
+)
+def test_think_blocks_are_stripped_only_when_complete_and_leading(
+    content: str, expected: str
+) -> None:
+    assert _strip_leading_think_blocks(content) == expected
+
+
+@pytest.mark.anyio
+async def test_provider_accepts_complete_leading_think_blocks() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "<think>first</think>\n"
+                                "<think>second</think>\n"
+                                '{"ok":true}'
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        _settings(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    assert await provider.generate("system", "user") == {"ok": True}
+    await provider.aclose()
+
+
+@pytest.mark.anyio
+async def test_provider_rejects_unclosed_leading_think_block() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": '<think>not closed\n{"ok":true}'}}
+                ]
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        _settings(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(ProviderFailure, match="reasoning block") as failure:
+        await provider.generate("system", "user")
+    assert failure.value.code == "LLM_INVALID_RESPONSE"
+    await provider.aclose()
 
 
 @pytest.mark.anyio

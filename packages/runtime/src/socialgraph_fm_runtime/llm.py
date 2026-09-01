@@ -20,6 +20,28 @@ from .environment import is_ambient_llm_environment_name
 
 MAX_API_KEY_CHARACTERS = 8_192
 LLM_NAMES = ("LLM_API_BASE", "LLM_MODEL", "LLM_API_KEY")
+LLM_PROVIDER_PRESETS: tuple[tuple[str, str | None], ...] = (
+    ("OpenAI 官方", "https://api.openai.com/v1"),
+    ("DeepSeek 官方", "https://api.deepseek.com"),
+    ("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    (
+        "Gemini OpenAI-compatible",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+    ),
+    ("MiniMax 中国", "https://api.minimaxi.com/v1"),
+    ("MiniMax 国际", "https://api.minimax.io/v1"),
+    ("OpenRouter", "https://openrouter.ai/api/v1"),
+    ("自定义 OpenAI-compatible", None),
+)
+_PROVIDER_LABELS_BY_HOST = {
+    "api.openai.com": "OpenAI 官方",
+    "api.deepseek.com": "DeepSeek 官方",
+    "dashscope.aliyuncs.com": "通义千问",
+    "generativelanguage.googleapis.com": "Gemini OpenAI-compatible",
+    "api.minimaxi.com": "MiniMax 中国",
+    "api.minimax.io": "MiniMax 国际",
+    "openrouter.ai": "OpenRouter",
+}
 _LEGACY_NAMES = {
     "LLM_API_MODE",
     "LLM_AUTH_SCHEME",
@@ -104,10 +126,20 @@ def normalize_api_base(value: str) -> str:
     port = f":{parsed_port}" if parsed_port is not None else ""
     hostname = f"[{host}]" if ":" in host else host
     path = parsed.path.rstrip("/")
-    if path.endswith("/chat/completions"):
-        path = path[: -len("/chat/completions")]
-    if not path:
-        path = "/v1"
+    if host.rstrip(".") == "api.deepseek.com" and path in {
+        "",
+        "/v1",
+        "/chat/completions",
+        "/v1/chat/completions",
+    }:
+        # DeepSeek documents both the root and /v1 compatibility form, but its
+        # canonical Chat Completions endpoint is rooted directly at the host.
+        path = ""
+    else:
+        if path.endswith("/chat/completions"):
+            path = path[: -len("/chat/completions")]
+        if not path:
+            path = "/v1"
     return urllib.parse.urlunsplit(
         (parsed.scheme.lower(), hostname + port, path, "", "")
     )
@@ -426,11 +458,20 @@ def migrate_private_environment_permissions(
 def configuration_summary(environment: dict[str, str]) -> dict[str, Any]:
     selected = _validated_values(environment)
     return {
+        "provider": provider_label(selected["LLM_API_BASE"]),
         "apiBase": selected["LLM_API_BASE"],
         "endpoint": derive_api_endpoint(selected["LLM_API_BASE"]),
         "model": selected["LLM_MODEL"],
         "apiKeyConfigured": True,
     }
+
+
+def provider_label(api_base: str) -> str:
+    """Infer a display-only provider label from an exact normalized hostname."""
+
+    normalized = normalize_api_base(api_base)
+    host = (urllib.parse.urlsplit(normalized).hostname or "").rstrip(".").lower()
+    return _PROVIDER_LABELS_BY_HOST.get(host, "自定义 OpenAI-compatible")
 
 
 def _prompt_line(
@@ -450,6 +491,23 @@ def _prompt_line(
     return default if not selected and default is not None else selected
 
 
+def _prompt_provider(stdin: TextIO, stdout: TextIO) -> tuple[str, str | None]:
+    stdout.write("请选择大模型服务商：\n")
+    for index, (label, api_base) in enumerate(LLM_PROVIDER_PRESETS, start=1):
+        detail = api_base if api_base is not None else "手动输入兼容接口地址"
+        stdout.write(f"  {index}. {label}（{detail}）\n")
+    stdout.flush()
+    for attempt in range(3):
+        selected = _prompt_line(stdin, stdout, "请输入序号 [1-8]").strip()
+        if re.fullmatch(r"[1-8]", selected):
+            return LLM_PROVIDER_PRESETS[int(selected) - 1]
+        remaining = 2 - attempt
+        if remaining:
+            stdout.write(f"无效选择，请输入 1 至 8（剩余 {remaining} 次）\n")
+            stdout.flush()
+    raise RuntimeError("服务商选择连续三次无效，配置已取消")
+
+
 def configure_environment(
     *,
     api_base: str | None,
@@ -460,9 +518,20 @@ def configure_environment(
 ) -> dict[str, str]:
     interactive = stdin.isatty()
     if interactive:
-        base = _prompt_line(stdin, stdout, "大模型 API 地址", default=api_base)
+        _, preset_base = _prompt_provider(stdin, stdout)
+        base = _prompt_line(
+            stdin,
+            stdout,
+            "大模型 API 地址",
+            default=preset_base if preset_base is not None else api_base,
+        )
+        normalize_api_base(base)
         selected_model = _prompt_line(stdin, stdout, "模型 ID", default=model)
-        key = getpass.getpass("API Key: ")
+        _single_line("Model ID", selected_model)
+        try:
+            key = getpass.getpass("API Key: ")
+        except (EOFError, KeyboardInterrupt) as error:
+            raise RuntimeError("LLM configuration input was cancelled") from error
     else:
         if not api_base or not model or not api_key_stdin:
             raise RuntimeError(
@@ -483,6 +552,7 @@ def configure_environment(
         summary = configuration_summary(selected)
         stdout.write(
             "配置摘要（密钥已隐藏）：\n"
+            f"  服务商：{summary['provider']}\n"
             f"  API 地址：{summary['apiBase']}\n"
             f"  模型：{summary['model']}\n"
             "  API Key：已输入（隐藏）\n"

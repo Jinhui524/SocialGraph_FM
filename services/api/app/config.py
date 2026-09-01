@@ -89,9 +89,18 @@ def derive_llm_endpoint(api_base: str) -> str:
     """Derive the single supported OpenAI Chat Completions endpoint."""
 
     base = api_base.rstrip("/")
+    parts = urlsplit(base)
+    hostname = (parts.hostname or "").rstrip(".").lower()
+    if hostname == "api.deepseek.com" and parts.path in {
+        "",
+        "/",
+        "/v1",
+        "/chat/completions",
+        "/v1/chat/completions",
+    }:
+        return f"{parts.scheme}://{parts.netloc}/chat/completions"
     if base.endswith("/chat/completions"):
         return base
-    parts = urlsplit(base)
     if not parts.path or parts.path == "/":
         return f"{base}/v1/chat/completions"
     return f"{base}/chat/completions"

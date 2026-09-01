@@ -9,6 +9,11 @@ import pytest
 from socialgraph_fm_runtime import llm
 
 
+class _TTYStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -44,6 +49,22 @@ def test_base_root_v1_and_full_endpoint_are_normalized(
     assert llm.derive_api_endpoint(value) == f"{expected}/chat/completions"
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://api.deepseek.com",
+        "https://api.deepseek.com/v1",
+        "https://api.deepseek.com/chat/completions",
+        "https://api.deepseek.com/v1/chat/completions",
+    ],
+)
+def test_deepseek_compatibility_forms_use_the_official_root(value: str) -> None:
+    assert llm.normalize_api_base(value) == "https://api.deepseek.com"
+    assert llm.derive_api_endpoint(value) == (
+        "https://api.deepseek.com/chat/completions"
+    )
+
+
 def test_non_chat_protocols_are_not_supported() -> None:
     with pytest.raises(ValueError, match="Only"):
         llm.derive_api_endpoint("https://provider.example/v1", "responses")
@@ -74,6 +95,136 @@ def test_noninteractive_configuration_never_adopts_ambient_key(
             model="model-id",
             api_key_stdin=False,
             stdin=io.StringIO(""),
+            stdout=io.StringIO(),
+        )
+
+
+def test_provider_presets_have_stable_order_and_addresses() -> None:
+    assert llm.LLM_PROVIDER_PRESETS == (
+        ("OpenAI 官方", "https://api.openai.com/v1"),
+        ("DeepSeek 官方", "https://api.deepseek.com"),
+        ("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        (
+            "Gemini OpenAI-compatible",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+        ),
+        ("MiniMax 中国", "https://api.minimaxi.com/v1"),
+        ("MiniMax 国际", "https://api.minimax.io/v1"),
+        ("OpenRouter", "https://openrouter.ai/api/v1"),
+        ("自定义 OpenAI-compatible", None),
+    )
+
+
+@pytest.mark.parametrize(
+    ("selection", "expected_base", "expected_provider"),
+    [
+        ("1", "https://api.openai.com/v1", "OpenAI 官方"),
+        ("2", "https://api.deepseek.com", "DeepSeek 官方"),
+        (
+            "3",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "通义千问",
+        ),
+        (
+            "4",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "Gemini OpenAI-compatible",
+        ),
+        ("5", "https://api.minimaxi.com/v1", "MiniMax 中国"),
+        ("6", "https://api.minimax.io/v1", "MiniMax 国际"),
+        ("7", "https://openrouter.ai/api/v1", "OpenRouter"),
+    ],
+)
+def test_interactive_provider_preset_only_prefills_editable_api_base(
+    monkeypatch: pytest.MonkeyPatch,
+    selection: str,
+    expected_base: str,
+    expected_provider: str,
+) -> None:
+    monkeypatch.setattr(llm.getpass, "getpass", lambda _prompt: "hidden-key")
+    stdout = io.StringIO()
+    environment = llm.configure_environment(
+        api_base=None,
+        model=None,
+        api_key_stdin=False,
+        stdin=_TTYStringIO(f"{selection}\n\nmodel-from-user\n"),
+        stdout=stdout,
+    )
+
+    assert environment == {
+        "LLM_API_BASE": expected_base,
+        "LLM_MODEL": "model-from-user",
+        "LLM_API_KEY": "hidden-key",
+    }
+    output = stdout.getvalue()
+    assert f"服务商：{expected_provider}" in output
+    assert "hidden-key" not in output
+
+
+def test_interactive_custom_provider_requires_and_accepts_an_editable_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm.getpass, "getpass", lambda _prompt: "hidden-key")
+    stdout = io.StringIO()
+    environment = llm.configure_environment(
+        api_base=None,
+        model=None,
+        api_key_stdin=False,
+        stdin=_TTYStringIO("8\nhttps://relay.example/openai\nrelay-model\n"),
+        stdout=stdout,
+    )
+
+    assert environment["LLM_API_BASE"] == "https://relay.example/openai"
+    assert environment["LLM_MODEL"] == "relay-model"
+    assert "服务商：自定义 OpenAI-compatible" in stdout.getvalue()
+
+
+def test_interactive_provider_selection_has_no_default_and_stops_after_three_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        llm.getpass,
+        "getpass",
+        lambda _prompt: pytest.fail("API Key must not be requested"),
+    )
+    stdout = io.StringIO()
+    with pytest.raises(RuntimeError, match="连续三次无效"):
+        llm.configure_environment(
+            api_base="https://provider.example/v1",
+            model="model-id",
+            api_key_stdin=False,
+            stdin=_TTYStringIO("\n0\ninvalid\n"),
+            stdout=stdout,
+        )
+
+    assert "请输入序号 [1-8] [" not in stdout.getvalue()
+
+
+def test_interactive_provider_selection_eof_is_a_clean_cancellation() -> None:
+    with pytest.raises(RuntimeError, match="cancelled"):
+        llm.configure_environment(
+            api_base=None,
+            model=None,
+            api_key_stdin=False,
+            stdin=_TTYStringIO(""),
+            stdout=io.StringIO(),
+        )
+
+
+def test_interactive_model_is_required_before_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        llm.getpass,
+        "getpass",
+        lambda _prompt: pytest.fail("API Key must not be requested"),
+    )
+    with pytest.raises(ValueError, match="Model ID cannot be empty"):
+        llm.configure_environment(
+            api_base=None,
+            model=None,
+            api_key_stdin=False,
+            stdin=_TTYStringIO("1\n\n\n"),
             stdout=io.StringIO(),
         )
 
@@ -149,6 +300,15 @@ def test_configuration_summary_never_contains_key() -> None:
     )
     assert "secret-value" not in repr(summary)
     assert summary["endpoint"] == "https://provider.example/v1/chat/completions"
+    assert summary["provider"] == "自定义 OpenAI-compatible"
+
+
+def test_provider_inference_requires_an_exact_official_hostname() -> None:
+    assert llm.provider_label("https://api.openai.com/v1") == "OpenAI 官方"
+    assert (
+        llm.provider_label("https://api.openai.com.evil.example/v1")
+        == "自定义 OpenAI-compatible"
+    )
 
 
 def test_windows_acl_validator_rejects_unexpected_principal(tmp_path: Path) -> None:

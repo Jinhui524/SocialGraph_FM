@@ -148,8 +148,12 @@ def test_provider_is_one_protocol_and_keeps_network_safety_defaults() -> None:
     settings = _read("services/api/app/config.py")
     assert "chat/completions" in settings
     assert "derive_llm_endpoint" in provider
-    assert '"temperature": 0' in provider
+    assert '"temperature"' not in provider
     assert '"max_tokens": 700' in provider
+    assert '"max_completion_tokens"' in provider
+    assert '"stream": False' in provider
+    assert '"thinking"' in provider
+    assert "x-goog-api-client" in provider
     assert "trust_env=False" in provider
     assert "follow_redirects=False" in provider
     assert "anthropic_messages" not in provider
