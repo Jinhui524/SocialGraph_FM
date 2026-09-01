@@ -6,17 +6,36 @@ import sys
 from typing import Any
 
 from .config import Settings
-from .provider import OpenAICompatibleProvider, ProviderFailure
+from .provider import (
+    NETWORK_DIAGNOSTIC_CODES,
+    OpenAICompatibleProvider,
+    ProviderFailure,
+)
 
 
 _CHECK_FIELD = "socialgraph_fm_connection_check"
 CHECK_SCHEMA_VERSION = "socialgraph-fm.llm-provider-check/1.0"
 
 
-def check_result(*, ok: bool, code: str) -> dict[str, object]:
+def check_result(
+    *, ok: bool, code: str, diagnostic_code: str | None = None
+) -> dict[str, object]:
     """Build the only machine-readable result exposed to the runtime launcher."""
 
-    return {"schemaVersion": CHECK_SCHEMA_VERSION, "ok": ok, "code": code}
+    result: dict[str, object] = {
+        "schemaVersion": CHECK_SCHEMA_VERSION,
+        "ok": ok,
+        "code": code,
+    }
+    if diagnostic_code is not None:
+        if diagnostic_code not in NETWORK_DIAGNOSTIC_CODES:
+            raise ValueError("Unsupported provider diagnostic code")
+        if code != "LLM_NETWORK_ERROR":
+            raise ValueError("Provider diagnostic code requires LLM_NETWORK_ERROR")
+        if ok:
+            raise ValueError("Provider diagnostic code requires a failed check")
+        result["diagnosticCode"] = diagnostic_code
+    return result
 
 
 def _is_valid_check_result(result: dict[str, Any]) -> bool:
@@ -52,7 +71,14 @@ def main() -> int:
         asyncio.run(verify_provider())
     except ProviderFailure as error:
         print(
-            json.dumps(check_result(ok=False, code=error.code), sort_keys=True),
+            json.dumps(
+                check_result(
+                    ok=False,
+                    code=error.code,
+                    diagnostic_code=error.diagnostic_code,
+                ),
+                sort_keys=True,
+            ),
             file=sys.stderr,
         )
         return 1

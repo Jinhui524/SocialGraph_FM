@@ -65,7 +65,7 @@ python scripts/socialgraph.py doctor
 python scripts/socialgraph.py configure-llm
 ```
 
-`onboard` 自动完成：
+`onboard` 开始时可以通过交互菜单或非交互参数收集候选三字段。此时只在当前进程内存中保留候选值，不发起真实 LLM 请求，也不写入私有配置。随后命令自动完成：
 
 1. 验证 Windows/Ubuntu x64 与 64 位 CPython 3.12.x；
 2. 按操作系统选择唯一 CPU lock；
@@ -73,9 +73,10 @@ python scripts/socialgraph.py configure-llm
 4. 裁剪锁定版本允许删除的 Torch 编译资产与可由同目录源码重建的 `.pyc`；
 5. 运行 `pip check`、`NeighborLoader` 和四个 Russia 真实 forward；复用旧环境时执行同等的裁剪后复核；
 6. 新环境通过后原子切换到 `var/runtime`，安装并校验模型、数据、Governance 索引、案例、示例和预构建 Web；
-7. 完成四 checkpoint forward，通过服务商菜单收集三字段并验证 LLM，写入 runtime profile 后才删除旧环境备份、旧 API/GFM 环境和 `node_modules`。
+7. 完成四 checkpoint forward，原子写入 runtime profile 并保留已经验证的本地环境和运行资源；
+8. 使用受管 runtime 对候选三字段发起真实 LLM 验证；成功后才原子写入私有配置并报告 onboarding 最终完成。
 
-安装或锁文件变化时不得就地改写当前可用环境。新 generation 验证失败时保留旧环境和用户的案件、模型、数据及私有配置。
+安装或锁文件变化时不得就地改写当前可用环境。新 generation 的本地验证失败时保留旧环境和用户的案件、模型、数据及私有配置。日志中的 `local runtime ready` 只表示本地 CPU runtime、Web 和资产已经就绪，不表示整个 onboarding 成功；只有 LLM 验证并保存成功后的 `complete` 才是最终完成。LLM 验证发生在本地 runtime 和 profile 原子启用之后：失败时命令仍返回失败，候选三字段不会保存，原有私有配置文件保持逐字节不变，但刚完成验证的 CPU runtime、模型、Web、案例和 profile 不会被回滚或删除。
 
 受管 Python 命令统一使用 `-B`，避免服务运行时重新生成 bytecode。复用版本和锁哈希均匹配的现有 runtime 时不会重新安装；服务停止后只对 `site-packages` 中可安全重建的 `.pyc` 做幂等裁剪。purelib 本身越界或包含链接时会 fail closed；单个无对应源码、格式异常、链接或 reparse point 候选会被保留并排除在删除清单外。该过程不会触碰模型、配置、案件或旧环境。
 
@@ -129,13 +130,40 @@ LLM_API_KEY
 - `openrouter.ai` 按其兼容合同固定使用 `max_tokens: 700`，即使模型 slug 指向 OpenAI 模型；
 - 其他兼容地址默认使用 `max_tokens: 700`；模型 ID 最后一段为 `gpt-5*` 或 `o1`–`o9` 时改用 `max_completion_tokens: 700`。
 
-所有服务统一发送 `stream: false`，不发送 `temperature`，让模型采用其服务端默认值。HTTP 固定使用 Bearer 鉴权、15 秒超时和 2 MiB 响应上限；禁止重定向和继承环境代理；远程地址必须是 HTTPS，只有本机回环地址可以使用 HTTP。服务商 hostname 使用严格解析结果匹配，不使用容易被 `api.openai.com.evil.example` 绕过的字符串包含判断。
+所有服务统一发送 `stream: false`，不发送 `temperature`，让模型采用其服务端默认值。HTTP 固定发送 `Content-Type: application/json`、`Accept: application/json`、`Accept-Encoding: identity` 和 `Authorization: Bearer <API Key>`，使用 15 秒超时和 2 MiB 响应上限。`identity` 用于兼容不能正确处理压缩响应的中转服务，但不会替代鉴权；不能删除 `Authorization`。项目禁止重定向和继承环境代理，远程地址必须是 HTTPS，只有本机回环地址可以使用 HTTP。服务商 hostname 使用严格解析结果匹配，不使用容易被 `api.openai.com.evil.example` 绕过的字符串包含判断。
 
 系统只会剥离位于响应开头且完整闭合的 `<think>...</think>` 前缀，随后仍要求正文通过 JSON/Schema 校验；不完整标签或正文中的标签不会被静默忽略。系统保留一次结构化修复请求；这次修复仍调用同一模型和同一 endpoint，不是备用模型。401/403、404、429、超时、超大响应、非法 JSON 或越界内容都会显式失败，系统不会切换服务商、切换模型、降级协议或生成确定性替代叙述。
 
 公开合同不支持 Responses、Anthropic Messages、Azure 专用 query/header、原生 Gemini 协议、多模型故障转移或供应商专用 SDK。需要这些协议的服务必须另行提供兼容 Chat Completions 的 Base URL。OpenAI 官方密钥从 [API Platform](https://platform.openai.com/api-keys) 创建并独立管理 API 用量；ChatGPT 或 Codex 订阅、登录凭据不能作为本项目的 API Key。
 
 意图理解、构图意图和 Assistant Skills 均要求 LLM。未配置、401/403、404 模型错误、429、超时、非法 JSON 或越界内容会显式失败，不会切换本地规则或生成确定性替代叙述。确定性图算法、输入校验、Skill 结果校验和人工确认仍保留，它们是证据/安全边界，不是 LLM 备选项。
+
+## LLM 连接诊断与恢复
+
+旧版 `NETWORK_TLS` 把多种不同网络故障合并到一个名称中，不能据此断定证书损坏。当前 provider check 在保持公开 API 错误码 `LLM_NETWORK_ERROR` 不变的同时，可为网络错误返回固定、安全的 `diagnosticCode`；launcher 还会把既有的 `LLM_TIMEOUT` 显示为 `TIMEOUT`。这些诊断不会包含异常原文、请求 URL、响应正文或 API Key。
+
+| 诊断码 | 含义与处理 |
+| --- | --- |
+| `LOCAL_ENDPOINT` | 本机回环地址没有服务监听；先启动兼容服务并核对端口。 |
+| `DNS` | 域名无法解析；核对域名和当前网络的 DNS。 |
+| `CONNECT` | 连接被拒绝、重置或网络不可达；检查网络、防火墙和服务状态。 |
+| `TLS_HOSTNAME` | 证书域名与 API 地址不匹配；核对地址和中转证书。 |
+| `TLS_CERTIFICATE` | 证书过期、不受信任或证书链不完整；核对系统时间并由服务方修复证书链。 |
+| `TLS_HANDSHAKE` | TLS 握手被服务端或中间设备中断；检查中转的 TLS 实现和网络设备。 |
+| `PROTOCOL` | TLS 建立后 HTTP 连接提前关闭；检查中转的 HTTP 兼容实现。 |
+| `PROXY` | 当前网络要求代理或代理握手失败；项目不会隐式继承系统／环境代理，应改用可直接访问的服务。 |
+| `NETWORK` | 无法进一步安全分类的网络错误；先核对服务状态、网络和防火墙。 |
+| `TIMEOUT` | 服务在 15 秒内没有完成响应；检查服务负载、模型可用性和网络延迟。 |
+
+不要通过删除 Bearer 鉴权、关闭证书或 hostname 验证、设置 `verify=False`，或让程序隐式继承系统代理来绕过错误。这些方式会破坏官方 API 或降低密钥与传输安全。
+
+`onboard` 在 LLM 验证前已经提交通过验证的本地环境。出现连接错误时按以下顺序恢复：
+
+1. 运行 `python scripts/socialgraph.py doctor`，查看 CPU runtime、模型和资产是否正常；
+2. 本地 runtime 正常时，修正 API 地址、模型 ID 或 API Key 后运行 `python scripts/socialgraph.py configure-llm`；该命令只验证并保存 LLM 配置，不重新安装依赖或重跑模型安装；
+3. 只有 doctor 显示本地 runtime 或资产缺失时，才重新运行 `python scripts/socialgraph.py onboard`。
+
+候选 LLM 配置验证失败时不会保存；如果此前已有可用的三字段配置，其文件内容保持不变。
 
 ## Skills 与 API
 

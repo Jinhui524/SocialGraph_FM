@@ -303,6 +303,133 @@ def test_configuration_summary_never_contains_key() -> None:
     assert summary["provider"] == "自定义 OpenAI-compatible"
 
 
+def _test_environment(label: str) -> dict[str, str]:
+    return {
+        "LLM_API_BASE": f"https://{label}.example/v1",
+        "LLM_MODEL": f"{label}-model",
+        "LLM_API_KEY": f"{label}-key",
+    }
+
+
+def _private_bytes(environment: dict[str, str]) -> bytes:
+    return (
+        "\n".join(f"{name}={environment[name]}" for name in llm.LLM_NAMES) + "\n"
+    ).encode()
+
+
+@pytest.mark.parametrize("failure_stage", ["acl", "readback"])
+def test_existing_configuration_is_restored_after_post_replace_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_stage: str,
+) -> None:
+    path = tmp_path / "private" / "socialgraph-api.env"
+    path.parent.mkdir()
+    old = _test_environment("old")
+    candidate = _test_environment("candidate")
+    path.write_bytes(_private_bytes(old))
+    monkeypatch.setattr(llm, "assert_private_permissions", lambda _path: None)
+
+    def protect(target: Path, *, directory: bool) -> None:
+        if failure_stage == "acl" and target == path and not directory:
+            raise RuntimeError("synthetic active ACL failure")
+
+    monkeypatch.setattr(llm, "protect_private_path", protect)
+    original_parse = llm._parse_private_environment
+
+    def parse(
+        target: Path, *, allow_pending_transaction: bool = False
+    ) -> dict[str, str]:
+        if (
+            failure_stage == "readback"
+            and target == path
+            and allow_pending_transaction
+        ):
+            raise RuntimeError("synthetic active read-back failure")
+        return original_parse(
+            target,
+            allow_pending_transaction=allow_pending_transaction,
+        )
+
+    monkeypatch.setattr(llm, "_parse_private_environment", parse)
+
+    with pytest.raises(RuntimeError, match="synthetic active"):
+        llm.write_private_environment(path, candidate)
+
+    assert path.read_bytes() == _private_bytes(old)
+    assert llm._private_environment_backups(path) == ()
+
+
+def test_fresh_configuration_is_removed_after_post_replace_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "private" / "socialgraph-api.env"
+    monkeypatch.setattr(llm, "assert_private_permissions", lambda _path: None)
+
+    def protect(target: Path, *, directory: bool) -> None:
+        if target == path and not directory:
+            raise RuntimeError("synthetic active ACL failure")
+
+    monkeypatch.setattr(llm, "protect_private_path", protect)
+
+    with pytest.raises(RuntimeError, match="synthetic active ACL failure"):
+        llm.write_private_environment(path, _test_environment("candidate"))
+
+    assert not path.exists()
+    assert llm._private_environment_backups(path) == ()
+
+
+def test_successful_replacement_does_not_leak_private_backup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "private" / "socialgraph-api.env"
+    path.parent.mkdir()
+    path.write_bytes(_private_bytes(_test_environment("old")))
+    monkeypatch.setattr(llm, "assert_private_permissions", lambda _path: None)
+    monkeypatch.setattr(llm, "protect_private_path", lambda *_args, **_kwargs: None)
+    candidate = _test_environment("candidate")
+
+    llm.write_private_environment(path, candidate)
+
+    assert path.read_bytes() == _private_bytes(candidate)
+    assert llm._private_environment_backups(path) == ()
+
+
+def test_failed_rollback_preserves_backup_and_forces_fail_closed_reads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "private" / "socialgraph-api.env"
+    path.parent.mkdir()
+    old = _test_environment("old")
+    path.write_bytes(_private_bytes(old))
+    monkeypatch.setattr(llm, "assert_private_permissions", lambda _path: None)
+
+    def protect(target: Path, *, directory: bool) -> None:
+        if target == path and not directory:
+            raise RuntimeError("synthetic active ACL failure")
+
+    monkeypatch.setattr(llm, "protect_private_path", protect)
+    original_replace = llm.os.replace
+
+    def replace(source: str | Path, destination: str | Path) -> None:
+        selected_source = Path(source)
+        if selected_source.suffix == ".rollback" and Path(destination) == path:
+            raise OSError("synthetic rollback failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(llm.os, "replace", replace)
+
+    with pytest.raises(RuntimeError, match="rollback failed") as captured:
+        llm.write_private_environment(path, _test_environment("candidate"))
+
+    assert "candidate-key" not in str(captured.value)
+    backups = llm._private_environment_backups(path)
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == _private_bytes(old)
+    with pytest.raises(RuntimeError, match="recovery is incomplete"):
+        llm.parse_private_environment(path)
+
+
 def test_provider_inference_requires_an_exact_official_hostname() -> None:
     assert llm.provider_label("https://api.openai.com/v1") == "OpenAI 官方"
     assert (

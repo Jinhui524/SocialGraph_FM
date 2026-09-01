@@ -372,7 +372,20 @@ def _validated_values(environment: dict[str, str]) -> dict[str, str]:
     return selected
 
 
-def parse_private_environment(path: Path) -> dict[str, str]:
+def _private_environment_backups(path: Path) -> tuple[Path, ...]:
+    if not path.parent.is_dir():
+        return ()
+    return tuple(sorted(path.parent.glob(f".{path.name}.*.rollback")))
+
+
+def _parse_private_environment(
+    path: Path, *, allow_pending_transaction: bool = False
+) -> dict[str, str]:
+    if not allow_pending_transaction and _private_environment_backups(path):
+        raise RuntimeError(
+            "Private configuration recovery is incomplete; "
+            f"refusing to use the active file: {path}"
+        )
     if not path.exists():
         return {}
     if path.is_symlink() or not path.is_file():
@@ -409,6 +422,34 @@ def parse_private_environment(path: Path) -> dict[str, str]:
         raise RuntimeError(str(error)) from error
 
 
+def parse_private_environment(path: Path) -> dict[str, str]:
+    return _parse_private_environment(path)
+
+
+def _reserve_private_environment_backup(path: Path) -> Path:
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".rollback", dir=path.parent
+    )
+    os.close(descriptor)
+    return Path(name)
+
+
+def _rollback_private_environment(
+    path: Path,
+    backup: Path,
+    *,
+    had_existing: bool,
+    old_moved: bool,
+    activated: bool,
+) -> None:
+    if had_existing and old_moved:
+        os.replace(backup, path)
+        return
+    if activated:
+        path.unlink(missing_ok=True)
+    backup.unlink(missing_ok=True)
+
+
 def write_private_environment(path: Path, environment: dict[str, str]) -> None:
     selected = _validated_values(environment)
     if path.exists() and (path.is_symlink() or not path.is_file()):
@@ -421,6 +462,10 @@ def write_private_environment(path: Path, environment: dict[str, str]) -> None:
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
     temporary = Path(temporary_name)
+    backup: Path | None = None
+    had_existing = path.exists()
+    old_moved = False
+    activated = False
     try:
         if os.name != "nt":
             fchmod = getattr(os, "fchmod", None)
@@ -434,10 +479,43 @@ def write_private_environment(path: Path, environment: dict[str, str]) -> None:
         protect_private_path(temporary, directory=False)
         if parse_private_environment(temporary) != selected:
             raise RuntimeError("Staged LLM configuration failed read-back validation")
+        if _private_environment_backups(path):
+            raise RuntimeError(
+                "Private configuration recovery is incomplete; refusing to overwrite it"
+            )
+        if had_existing:
+            assert_private_permissions(path)
+        backup = _reserve_private_environment_backup(path)
+        if had_existing:
+            os.replace(path, backup)
+            old_moved = True
         os.replace(temporary, path)
+        activated = True
         protect_private_path(path, directory=False)
-        if parse_private_environment(path) != selected:
+        if (
+            _parse_private_environment(path, allow_pending_transaction=True)
+            != selected
+        ):
             raise RuntimeError("Saved LLM configuration failed read-back validation")
+        backup.unlink()
+        backup = None
+    except Exception as error:
+        if backup is not None and backup.exists():
+            try:
+                _rollback_private_environment(
+                    path,
+                    backup,
+                    had_existing=had_existing,
+                    old_moved=old_moved,
+                    activated=activated,
+                )
+                backup = None
+            except OSError:
+                raise RuntimeError(
+                    "Private configuration rollback failed; recovery backup was "
+                    f"preserved and the configuration is fail-closed: {backup}"
+                ) from error
+        raise
     finally:
         temporary.unlink(missing_ok=True)
 

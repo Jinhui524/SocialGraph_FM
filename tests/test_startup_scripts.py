@@ -154,6 +154,8 @@ def test_provider_is_one_protocol_and_keeps_network_safety_defaults() -> None:
     assert '"stream": False' in provider
     assert '"thinking"' in provider
     assert "x-goog-api-client" in provider
+    assert '"Accept-Encoding": "identity"' in provider
+    assert '"Authorization": f"Bearer {self._api_key}"' in provider
     assert "trust_env=False" in provider
     assert "follow_redirects=False" in provider
     assert "anthropic_messages" not in provider

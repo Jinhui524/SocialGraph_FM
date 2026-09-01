@@ -46,6 +46,7 @@ def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         data=json.dumps(payload).encode(),
         headers={
             "Authorization": "Bearer public-acceptance-placeholder",
+            "Accept-Encoding": "identity",
             "Content-Type": "application/json",
         },
         method="POST",
@@ -105,3 +106,32 @@ def test_unknown_contract_fails_closed() -> None:
             _request("Return something useful.", "hello"),
         )
     assert error.value.code == 422
+
+
+@pytest.mark.parametrize(
+    ("authorization", "accept_encoding", "expected_status"),
+    (
+        ("", "identity", 401),
+        ("Bearer ", "identity", 401),
+        ("Bearer public-acceptance-placeholder", "gzip", 406),
+    ),
+)
+def test_mock_requires_nonempty_bearer_and_identity_encoding(
+    authorization: str,
+    accept_encoding: str,
+    expected_status: int,
+) -> None:
+    with _provider() as base_url:
+        request = urllib.request.Request(
+            f"{base_url}/chat/completions",
+            data=json.dumps(_request("system", "user")).encode(),
+            headers={
+                "Authorization": authorization,
+                "Accept-Encoding": accept_encoding,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=5)
+    assert error.value.code == expected_status

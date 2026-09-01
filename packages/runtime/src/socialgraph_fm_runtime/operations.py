@@ -10,7 +10,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .bundle import (
     install_public_runtime_bundle,
@@ -79,7 +79,6 @@ class Ports:
 @dataclass(frozen=True)
 class SetupOptions:
     full_probe: bool = True
-    after_runtime: Callable[[Path], None] | None = None
 
 
 class _SetupReporter:
@@ -381,10 +380,6 @@ def setup(layout: RuntimeLayout, options: SetupOptions | None = None) -> Runtime
             reporter.log(
                 json.dumps(protocol_forward, ensure_ascii=False, sort_keys=True)
             )
-        if selected_options.after_runtime is not None:
-            reporter.stage("LLM: validating the required three-field configuration")
-            selected_options.after_runtime(runtime_python)
-
         runtime = RuntimeProfile.create(
             install_profile_id=str(profile["id"]),
             platform={
@@ -409,7 +404,7 @@ def setup(layout: RuntimeLayout, options: SetupOptions | None = None) -> Runtime
             except OSError as error:
                 reporter.log(f"Could not remove previous runtime backup {backup}: {error}")
         _cleanup_legacy_installations(layout, reporter)
-        reporter.stage("complete: one CPU runtime and prebuilt Web client are ready")
+        reporter.stage("local runtime ready: CPU runtime and prebuilt Web client")
         return runtime
     except Exception as error:
         reporter.log(f"setup failed: {error}")
@@ -560,6 +555,79 @@ def build_services(
     return [gfm, api]
 
 
+_NETWORK_DIAGNOSTIC_MESSAGES = {
+    "LOCAL_ENDPOINT": "本地大模型地址没有服务监听，请启动兼容服务并检查端口。",
+    "DNS": "无法解析大模型服务域名，请检查 API 地址和网络 DNS。",
+    "CONNECT": "无法连接大模型服务，请检查网络、防火墙、API 地址和服务状态。",
+    "TLS_HOSTNAME": (
+        "服务证书域名与 API 地址不匹配，请检查地址和中转服务证书；"
+        "不能绕过 TLS 验证。"
+    ),
+    "TLS_CERTIFICATE": (
+        "服务证书不可信、已过期或证书链不完整，请检查系统时间和服务证书；"
+        "不能绕过 TLS 验证。"
+    ),
+    "TLS_HANDSHAKE": (
+        "TLS 握手失败，请检查中转服务的 TLS 配置和中间网络设备。"
+    ),
+    "PROTOCOL": (
+        "服务在 HTTP 通信完成前中断连接，请检查中转服务的 TLS/HTTP 兼容性。"
+    ),
+    "PROXY": (
+        "连接需要代理或代理连接失败；SocialGraph-FM 不继承系统代理，"
+        "请使用可直连服务。"
+    ),
+    "NETWORK": "无法连接大模型服务，请检查域名、网络、防火墙和服务状态。",
+}
+
+_LLM_FAILURE_MESSAGES = {
+    "LLM_AUTH_ERROR": ("AUTH", "认证失败，请检查 API Key。"),
+    "LLM_ENDPOINT_ERROR": ("ENDPOINT", "接口地址不存在，请检查 API 地址。"),
+    "LLM_REQUEST_REJECTED": (
+        "REQUEST_OR_MODEL",
+        "请求或模型被服务拒绝，请检查模型 ID 与账户权限。",
+    ),
+    "LLM_RATE_LIMITED": (
+        "RATE_LIMIT",
+        "服务触发限流，请稍后重试或检查账户额度。",
+    ),
+    "LLM_UPSTREAM_ERROR": ("UPSTREAM", "上游服务暂时不可用，请稍后重试。"),
+    "LLM_TIMEOUT": ("TIMEOUT", "服务在 15 秒内未响应，请检查服务状态。"),
+    "LLM_INVALID_RESPONSE": (
+        "INVALID_RESPONSE",
+        "服务返回了无效内容，请检查模型兼容性。",
+    ),
+    "LLM_RESPONSE_TOO_LARGE": (
+        "INVALID_RESPONSE",
+        "服务响应超过安全上限，请检查模型兼容性。",
+    ),
+    "LLM_CONFIGURATION_ERROR": (
+        "CONFIGURATION",
+        "配置无法用于连接检查，请重新输入三项配置。",
+    ),
+}
+
+
+def _llm_connection_failure_message(code: str, diagnostic_code: object) -> str:
+    if code == "LLM_NETWORK_ERROR":
+        selected = (
+            diagnostic_code
+            if isinstance(diagnostic_code, str)
+            and diagnostic_code in _NETWORK_DIAGNOSTIC_MESSAGES
+            else "NETWORK"
+        )
+        detail = _NETWORK_DIAGNOSTIC_MESSAGES[selected]
+        return f"大模型连接检查失败（{selected}）：{detail}"
+    category, detail = _LLM_FAILURE_MESSAGES.get(
+        code,
+        (
+            "INVALID_RESPONSE",
+            "验证进程未返回可识别的安全结果，请检查本地安装。",
+        ),
+    )
+    return f"大模型连接检查失败（{category}）：{detail}"
+
+
 def test_llm_configuration(
     layout: RuntimeLayout,
     environment: dict[str, str],
@@ -581,13 +649,25 @@ def test_llm_configuration(
         child_environment[name] = environment[name]
     child_environment["PYTHONNOUSERSITE"] = "1"
     child_environment["PYTHONPATH"] = ""
-    completed = run_captured_process(
-        [str(selected), "-B", "-m", "app.provider_check"],
-        cwd=layout.api_root,
-        environment=child_environment,
-        timeout=25,
-        description="LLM connection check",
-    )
+    try:
+        completed = run_captured_process(
+            [str(selected), "-B", "-m", "app.provider_check"],
+            cwd=layout.api_root,
+            environment=child_environment,
+            timeout=25,
+            description="LLM connection check",
+        )
+    except RuntimeError as error:
+        code = (
+            "LLM_TIMEOUT"
+            if str(error) == "LLM connection check timed out after 25s"
+            else "LLM_CONFIGURATION_ERROR"
+        )
+        raise RuntimeError(_llm_connection_failure_message(code, None)) from None
+    except OSError:
+        raise RuntimeError(
+            _llm_connection_failure_message("LLM_CONFIGURATION_ERROR", None)
+        ) from None
     raw_lines = [
         line.strip()
         for line in (completed.stdout + "\n" + completed.stderr).splitlines()
@@ -602,34 +682,34 @@ def test_llm_configuration(
         if isinstance(candidate, dict):
             document = candidate
             break
-    code = (
-        str(document.get("code", "LLM_CONFIGURATION_ERROR"))
-        if document
-        else "LLM_CONFIGURATION_ERROR"
+    valid_schema = bool(
+        document is not None
+        and document.get("schemaVersion")
+        == "socialgraph-fm.llm-provider-check/1.0"
     )
+    code = str(document.get("code", "")) if valid_schema and document else ""
     if completed.returncode != 0:
-        categories = {
-            "LLM_AUTH_ERROR": "AUTH",
-            "LLM_ENDPOINT_ERROR": "ENDPOINT",
-            "LLM_REQUEST_REJECTED": "REQUEST_OR_MODEL",
-            "LLM_RATE_LIMITED": "RATE_LIMIT",
-            "LLM_UPSTREAM_ERROR": "UPSTREAM",
-            "LLM_TIMEOUT": "TIMEOUT",
-            "LLM_NETWORK_ERROR": "NETWORK_TLS",
-            "LLM_INVALID_RESPONSE": "INVALID_RESPONSE",
-            "LLM_RESPONSE_TOO_LARGE": "INVALID_RESPONSE",
-            "LLM_CONFIGURATION_ERROR": "CONFIGURATION",
-        }
+        if not valid_schema or document is None or document.get("ok") is not False:
+            raise RuntimeError(
+                "大模型连接检查失败（INVALID_RESPONSE）："
+                "验证进程未返回可识别的安全结果，请检查本地安装。"
+            )
+        diagnostic_code = (
+            document.get("diagnosticCode") if isinstance(document, dict) else None
+        )
         raise RuntimeError(
-            "LLM connection check failed: " + categories.get(code, "INVALID_RESPONSE")
+            _llm_connection_failure_message(code, diagnostic_code)
         )
     if (
         document is None
-        or document.get("schemaVersion") != "socialgraph-fm.llm-provider-check/1.0"
+        or not valid_schema
         or document.get("ok") is not True
         or code != "OK"
     ):
-        raise RuntimeError("LLM connection check failed: INVALID_RESPONSE")
+        raise RuntimeError(
+            "大模型连接检查失败（INVALID_RESPONSE）："
+            "服务响应不符合验证协议，请检查 API 地址和模型 ID。"
+        )
 
 
 def start_stack(layout: RuntimeLayout) -> Ports:

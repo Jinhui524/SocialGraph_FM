@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import ssl
 from typing import Any
 
 import httpx
@@ -119,6 +121,9 @@ async def test_provider_uses_fixed_chat_completions_contract_and_bearer_auth() -
     request = observed[0]
     assert str(request.url) == "https://provider.example/v1/chat/completions"
     assert request.headers["authorization"] == "Bearer secret-key"
+    assert request.headers["accept"] == "application/json"
+    assert request.headers["accept-encoding"] == "identity"
+    assert request.headers["content-type"] == "application/json"
     assert "x-api-key" not in request.headers
     body = json.loads(request.content)
     assert body == {
@@ -371,6 +376,7 @@ async def test_provider_classifies_http_failures_without_retry_or_body_leak(
     status: int,
     code: str,
     retryable: bool,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     calls = 0
 
@@ -380,7 +386,7 @@ async def test_provider_classifies_http_failures_without_retry_or_body_leak(
         return httpx.Response(status, text="sensitive upstream body")
 
     provider = OpenAICompatibleProvider(
-        _settings(),
+        _settings(model="unsafe-model-secret-key-at-private.example"),
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     with pytest.raises(ProviderFailure) as failure:
@@ -390,11 +396,15 @@ async def test_provider_classifies_http_failures_without_retry_or_body_leak(
     assert "sensitive" not in str(failure.value)
     assert provider.connection_status == "error"
     assert calls == 1
+    assert "sensitive" not in caplog.text
+    assert "unsafe" not in caplog.text
     await provider.aclose()
 
 
 @pytest.mark.anyio
-async def test_provider_timeout_is_explicit_and_not_retried() -> None:
+async def test_provider_timeout_is_explicit_and_not_retried(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     calls = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -403,7 +413,7 @@ async def test_provider_timeout_is_explicit_and_not_retried() -> None:
         raise httpx.ReadTimeout("secret timeout", request=request)
 
     provider = OpenAICompatibleProvider(
-        _settings(),
+        _settings(model="unsafe-model-secret-key-at-private.example"),
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     with pytest.raises(ProviderFailure) as failure:
@@ -411,6 +421,102 @@ async def test_provider_timeout_is_explicit_and_not_retried() -> None:
     assert failure.value.code == "LLM_TIMEOUT"
     assert failure.value.retryable is True
     assert calls == 1
+    assert "secret" not in caplog.text
+    assert "unsafe" not in caplog.text
+    await provider.aclose()
+
+
+def _raise_transport_failure(kind: str, request: httpx.Request) -> None:
+    wrapper: type[httpx.RequestError] = httpx.ConnectError
+    cause: BaseException | None = None
+    if kind == "local_refused":
+        cause = ConnectionRefusedError("unsafe-local-detail")
+    elif kind == "local_reset":
+        cause = ConnectionResetError("unsafe-local-reset-detail")
+    elif kind == "local_aborted":
+        cause = ConnectionAbortedError("unsafe-local-aborted-detail")
+    elif kind == "local_generic":
+        cause = None
+    elif kind == "dns":
+        cause = socket.gaierror("unsafe-dns-detail")
+    elif kind == "connect":
+        cause = ConnectionResetError("unsafe-connect-detail")
+    elif kind == "tls_hostname":
+        cause = ssl.SSLCertVerificationError(1, "unsafe-hostname-detail")
+        cause.verify_code = 62
+    elif kind == "tls_certificate":
+        cause = ssl.SSLCertVerificationError(1, "unsafe-certificate-detail")
+        cause.verify_code = 10
+    elif kind == "tls_handshake":
+        cause = ssl.SSLError("unsafe-handshake-detail")
+    elif kind == "protocol":
+        wrapper = httpx.RemoteProtocolError
+    elif kind == "proxy":
+        wrapper = httpx.ProxyError
+    elif kind == "network":
+        wrapper = httpx.NetworkError
+    else:  # pragma: no cover - the parametrization is the closed input set
+        raise AssertionError("unknown transport fixture")
+
+    if cause is None:
+        raise wrapper("unsafe-url-and-secret-key", request=request)
+    try:
+        raise cause
+    except BaseException as root:
+        raise wrapper("unsafe-url-and-secret-key", request=request) from root
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("kind", "api_base", "expected_diagnostic", "retryable"),
+    [
+        ("local_refused", "http://127.0.0.1:11434/v1", "LOCAL_ENDPOINT", True),
+        ("local_reset", "http://127.0.0.1:11434/v1", "CONNECT", True),
+        ("local_aborted", "http://localhost:11434/v1", "CONNECT", True),
+        ("local_generic", "http://[::1]:11434/v1", "CONNECT", True),
+        ("dns", "https://provider.example/v1", "DNS", True),
+        ("connect", "https://provider.example/v1", "CONNECT", True),
+        ("tls_hostname", "https://provider.example/v1", "TLS_HOSTNAME", False),
+        ("tls_certificate", "https://provider.example/v1", "TLS_CERTIFICATE", False),
+        ("tls_handshake", "https://provider.example/v1", "TLS_HANDSHAKE", True),
+        ("protocol", "https://provider.example/v1", "PROTOCOL", True),
+        ("proxy", "https://provider.example/v1", "PROXY", False),
+        ("network", "https://provider.example/v1", "NETWORK", True),
+    ],
+)
+async def test_provider_classifies_network_failures_without_leaking_or_retrying(
+    kind: str,
+    api_base: str,
+    expected_diagnostic: str,
+    retryable: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        _raise_transport_failure(kind, request)
+        raise AssertionError("transport failure fixture returned")  # pragma: no cover
+
+    provider = OpenAICompatibleProvider(
+        _settings(
+            api_base=api_base,
+            model="unsafe-model-secret-key-at-private.example",
+        ),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(ProviderFailure) as failure:
+        await provider.generate("system", "user")
+
+    assert failure.value.code == "LLM_NETWORK_ERROR"
+    assert failure.value.diagnostic_code == expected_diagnostic
+    assert failure.value.retryable is retryable
+    assert str(failure.value) == "LLM network request failed"
+    assert calls == 1
+    assert "unsafe" not in caplog.text
+    with pytest.raises(AttributeError):
+        failure.value.diagnostic_code = "NETWORK"  # type: ignore[misc]
     await provider.aclose()
 
 

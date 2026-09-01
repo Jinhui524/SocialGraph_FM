@@ -117,11 +117,12 @@ class _Handler(BaseHTTPRequestHandler):
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._json(400, {"error": "invalid_json"})
             return
-        if (
-            not isinstance(request, dict)
-            or not self.headers.get("Authorization", "").startswith("Bearer ")
-        ):
+        authorization = self.headers.get("Authorization", "")
+        if not isinstance(request, dict) or re.fullmatch(r"Bearer [^\s]+", authorization) is None:
             self._json(401, {"error": "unauthorized"})
+            return
+        if self.headers.get("Accept-Encoding", "").strip().lower() != "identity":
+            self._json(406, {"error": "identity_encoding_required"})
             return
         if (
             request.get("stream") is not False

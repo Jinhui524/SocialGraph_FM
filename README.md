@@ -85,6 +85,8 @@ API Key
 
 向导隐藏 API Key，并在保存前进行真实连通验证；验证失败不会保存。Qwen 业务空间用户可以把预填地址替换为控制台提供的专属 OpenAI-compatible 地址。现有中转服务继续通过“自定义 OpenAI-compatible”配置。
 
+如果 LLM 连通验证失败，已经验证完成的 CPU 环境、模型和运行资源会继续保留，不需要重新下载。先运行 `python scripts/socialgraph.py doctor` 查看本地环境状态；本地 runtime 正常时，修正地址、模型或密钥后直接运行 `python scripts/socialgraph.py configure-llm`。网络诊断码与恢复方法见[技术参考](docs/REFERENCE.md#llm-连接诊断与恢复)。
+
 OpenAI 官方配置需要从 [OpenAI API Platform](https://platform.openai.com/api-keys) 创建 API Key，并单独开通 API 用量；ChatGPT 或 Codex 的订阅、登录凭据不能替代 API Key。API Key 写入 Git 忽略的私有配置，只注入 API 进程，不进入浏览器、GFM 进程、日志或 Git。
 
 大模型是完整系统的必需组件。缺少配置、认证失败、模型不存在、限流、超时或返回非法结构时，相关问答与报告会明确失败，不会生成本地替代回答。

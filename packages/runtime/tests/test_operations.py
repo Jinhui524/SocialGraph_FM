@@ -88,8 +88,14 @@ def test_provider_check_surfaces_only_safe_failure_category(
         "run_captured_process",
         lambda *_args, **_kwargs: SimpleNamespace(
             returncode=1,
-            stdout='{"code":"LLM_AUTH_ERROR"}',
-            stderr="upstream leaked test-secret",
+            stdout=json.dumps(
+                {
+                    "schemaVersion": "socialgraph-fm.llm-provider-check/1.0",
+                    "ok": False,
+                    "code": "LLM_AUTH_ERROR",
+                }
+            ),
+            stderr="upstream leaked test-secret https://private.example/v1",
         ),
     )
     with pytest.raises(RuntimeError, match="AUTH") as captured:
@@ -103,6 +109,137 @@ def test_provider_check_surfaces_only_safe_failure_category(
             runtime_python=Path(sys.executable),
         )
     assert "test-secret" not in str(captured.value)
+    assert "private.example" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("diagnostic_code", "expected"),
+    [
+        ("LOCAL_ENDPOINT", "本地大模型地址没有服务监听"),
+        ("DNS", "无法解析大模型服务域名"),
+        ("CONNECT", "无法连接大模型服务"),
+        ("TLS_HOSTNAME", "证书域名与 API 地址不匹配"),
+        ("TLS_CERTIFICATE", "证书不可信、已过期或证书链不完整"),
+        ("TLS_HANDSHAKE", "TLS 握手失败"),
+        ("PROTOCOL", "HTTP 通信完成前中断连接"),
+        ("PROXY", "不继承系统代理"),
+        ("NETWORK", "检查域名、网络、防火墙和服务状态"),
+    ],
+)
+def test_provider_check_maps_allowlisted_network_diagnostics_to_fixed_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    diagnostic_code: str,
+    expected: str,
+) -> None:
+    monkeypatch.setattr(operations, "resolve_python", lambda value: Path(value))
+    monkeypatch.setattr(
+        operations,
+        "run_captured_process",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=json.dumps(
+                {
+                    "schemaVersion": "socialgraph-fm.llm-provider-check/1.0",
+                    "ok": False,
+                    "code": "LLM_NETWORK_ERROR",
+                    "diagnosticCode": diagnostic_code,
+                }
+            ),
+            stderr="socket detail leaked test-secret https://private.example/v1",
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        operations.test_llm_configuration(
+            RuntimeLayout(tmp_path),
+            {
+                "LLM_API_BASE": "https://provider.example/v1",
+                "LLM_MODEL": "model-id",
+                "LLM_API_KEY": "test-secret",
+            },
+            runtime_python=Path(sys.executable),
+        )
+
+    message = str(captured.value)
+    assert diagnostic_code in message
+    assert expected in message
+    assert "test-secret" not in message
+    assert "private.example" not in message
+
+
+def test_provider_check_rejects_unrecognized_network_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(operations, "resolve_python", lambda value: Path(value))
+    monkeypatch.setattr(
+        operations,
+        "run_captured_process",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=json.dumps(
+                {
+                    "schemaVersion": "socialgraph-fm.llm-provider-check/1.0",
+                    "ok": False,
+                    "code": "LLM_NETWORK_ERROR",
+                    "diagnosticCode": "ATTACKER_CONTROLLED_DETAIL",
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        operations.test_llm_configuration(
+            RuntimeLayout(tmp_path),
+            {
+                "LLM_API_BASE": "https://provider.example/v1",
+                "LLM_MODEL": "model-id",
+                "LLM_API_KEY": "test-secret",
+            },
+            runtime_python=Path(sys.executable),
+        )
+
+    assert "（NETWORK）" in str(captured.value)
+    assert "ATTACKER_CONTROLLED_DETAIL" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (RuntimeError("LLM connection check timed out after 25s"), "（TIMEOUT）"),
+        (RuntimeError("unsafe test-secret https://private.example"), "（CONFIGURATION）"),
+        (OSError("unsafe test-secret https://private.example"), "（CONFIGURATION）"),
+    ],
+)
+def test_provider_check_redacts_launcher_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure: BaseException,
+    expected: str,
+) -> None:
+    monkeypatch.setattr(operations, "resolve_python", lambda value: Path(value))
+    monkeypatch.setattr(
+        operations,
+        "run_captured_process",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        operations.test_llm_configuration(
+            RuntimeLayout(tmp_path),
+            {
+                "LLM_API_BASE": "https://provider.example/v1",
+                "LLM_MODEL": "model-id",
+                "LLM_API_KEY": "test-secret",
+            },
+            runtime_python=Path(sys.executable),
+        )
+
+    message = str(captured.value)
+    assert expected in message
+    assert "test-secret" not in message
+    assert "private.example" not in message
 
 
 def test_two_services_share_one_python_but_only_api_receives_key(
@@ -199,25 +336,19 @@ def _patch_setup(
         (layout.runtime_environment / "marker").write_text("old", encoding="utf-8")
 
 
-def test_setup_builds_temp_then_switches_one_runtime_and_runs_callback(
+def test_setup_builds_temp_then_switches_one_runtime_and_writes_profile(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     layout = RuntimeLayout(tmp_path)
     _patch_setup(monkeypatch, layout)
-    callback: list[Path] = []
+    runtime = operations.setup(layout, operations.SetupOptions(full_probe=False))
 
-    runtime = operations.setup(
-        layout,
-        operations.SetupOptions(
-            full_probe=False,
-            after_runtime=lambda python: callback.append(python),
-        ),
-    )
-
-    assert callback == [environment_python(layout.runtime_environment)]
     assert Path(runtime.interpreter["path"]) == environment_python(layout.runtime_environment)
     assert runtime.install_profile_id == "windows-x86_64-cpu-pt28"
     assert layout.profile_file.is_file()
+    setup_log = layout.setup_log_file.read_text(encoding="utf-8")
+    assert "local runtime ready:" in setup_log
+    assert "[setup] complete:" not in setup_log
 
 
 def test_new_runtime_is_pruned_and_probed_before_russia_and_activation(
@@ -433,20 +564,20 @@ def test_existing_runtime_reuse_failure_builds_a_verified_staging_environment(
     assert "installing the verified Windows/Ubuntu lock" in setup_log
 
 
-def test_failed_required_llm_callback_rolls_back_previous_runtime(
+def test_internal_asset_failure_still_rolls_back_previous_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     layout = RuntimeLayout(tmp_path)
     _patch_setup(monkeypatch, layout, existing=True)
 
-    def fail(_python: Path) -> None:
-        raise RuntimeError("LLM connection check failed: AUTH")
+    monkeypatch.setattr(
+        operations,
+        "install_web_bundle",
+        lambda _layout: (_ for _ in ()).throw(RuntimeError("web install failed")),
+    )
 
-    with pytest.raises(RuntimeError, match="AUTH"):
-        operations.setup(
-            layout,
-            operations.SetupOptions(full_probe=False, after_runtime=fail),
-        )
+    with pytest.raises(RuntimeError, match="web install failed"):
+        operations.setup(layout, operations.SetupOptions(full_probe=False))
 
     assert (layout.runtime_environment / "marker").read_text(encoding="utf-8") == "old"
     assert not layout.profile_file.exists()

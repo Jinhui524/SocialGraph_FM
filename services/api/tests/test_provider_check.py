@@ -92,3 +92,69 @@ def test_verifier_success_is_machine_readable(
         "ok": True,
         "code": "OK",
     }
+
+
+def test_verifier_emits_only_allowlisted_network_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def fail() -> None:
+        failure = ProviderFailure(
+            "LLM_NETWORK_ERROR",
+            "unsafe-url-and-secret-key",
+            retryable=True,
+            diagnostic_code="TLS_CERTIFICATE",
+        )
+        assert failure.retryable is False
+        raise failure
+
+    monkeypatch.setattr(provider_check, "verify_provider", fail)
+
+    assert provider_check.main() == 1
+    output = capsys.readouterr()
+    assert "unsafe-url-and-secret-key" not in output.err
+    assert json.loads(output.err) == {
+        "schemaVersion": "socialgraph-fm.llm-provider-check/1.0",
+        "ok": False,
+        "code": "LLM_NETWORK_ERROR",
+        "diagnosticCode": "TLS_CERTIFICATE",
+    }
+
+
+def test_verifier_rejects_non_allowlisted_diagnostic_code() -> None:
+    with pytest.raises(ValueError, match="Unsupported provider diagnostic code"):
+        provider_check.check_result(
+            ok=False,
+            code="LLM_NETWORK_ERROR",
+            diagnostic_code="unsafe-url-and-secret-key",
+        )
+
+    with pytest.raises(ValueError, match="Unsupported provider diagnostic code"):
+        ProviderFailure(
+            "LLM_NETWORK_ERROR",
+            "network failed",
+            diagnostic_code="unsafe-url-and-secret-key",
+        )
+
+
+def test_verifier_rejects_network_diagnostic_on_other_error_code() -> None:
+    with pytest.raises(ValueError, match="requires LLM_NETWORK_ERROR"):
+        provider_check.check_result(
+            ok=False,
+            code="LLM_AUTH_ERROR",
+            diagnostic_code="CONNECT",
+        )
+
+    with pytest.raises(ValueError, match="requires LLM_NETWORK_ERROR"):
+        ProviderFailure(
+            "LLM_AUTH_ERROR",
+            "authentication failed",
+            diagnostic_code="CONNECT",
+        )
+
+    with pytest.raises(ValueError, match="requires a failed check"):
+        provider_check.check_result(
+            ok=True,
+            code="LLM_NETWORK_ERROR",
+            diagnostic_code="CONNECT",
+        )

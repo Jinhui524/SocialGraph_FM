@@ -14,7 +14,6 @@ from .llm import (
     write_private_environment,
 )
 from .operations import (
-    SetupOptions,
     doctor,
     setup,
     start_stack,
@@ -92,15 +91,32 @@ def _onboard(
     layout: RuntimeLayout, arguments: argparse.Namespace
 ) -> RuntimeProfile:
     environment = _collect_configuration(arguments)
-
-    def verify_and_save(runtime_python: Path) -> None:
+    runtime = setup(layout)
+    print(
+        "[setup] LLM: validating the required three-field configuration",
+        file=sys.stderr,
+        flush=True,
+    )
+    runtime_python = Path(str(runtime.interpreter["path"]))
+    try:
         _save_verified_configuration(
             layout,
             environment,
             runtime_python=runtime_python,
         )
-
-    return setup(layout, SetupOptions(after_runtime=verify_and_save))
+    except (RuntimeError, ValueError) as error:
+        raise RuntimeError(
+            f"{error}\n"
+            "本地 CPU 环境和模型已完成并保留。\n"
+            "候选 LLM 配置未保存。\n"
+            "请修正后运行：python scripts/socialgraph.py configure-llm"
+        ) from None
+    print(
+        "[setup] complete: CPU runtime, Web client, assets, and LLM are ready",
+        file=sys.stderr,
+        flush=True,
+    )
+    return runtime
 
 
 def run(arguments: argparse.Namespace) -> int:

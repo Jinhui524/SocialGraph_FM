@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import re
-from collections.abc import Mapping
+import socket
+import ssl
+from collections.abc import Iterator, Mapping
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
@@ -18,13 +21,51 @@ MINIMAX_HOSTS = frozenset({"api.minimaxi.com", "api.minimax.io"})
 OPENROUTER_HOST = "openrouter.ai"
 _THINK_OPEN = "<think>"
 _THINK_CLOSE = "</think>"
+NETWORK_DIAGNOSTIC_CODES = frozenset(
+    {
+        "LOCAL_ENDPOINT",
+        "DNS",
+        "CONNECT",
+        "TLS_HOSTNAME",
+        "TLS_CERTIFICATE",
+        "TLS_HANDSHAKE",
+        "PROTOCOL",
+        "PROXY",
+        "NETWORK",
+    }
+)
+NON_RETRYABLE_NETWORK_DIAGNOSTICS = frozenset(
+    {"TLS_HOSTNAME", "TLS_CERTIFICATE", "PROXY"}
+)
+_HOSTNAME_MISMATCH_VERIFY_CODES = frozenset({62, 64})
 
 
 class ProviderFailure(RuntimeError):
-    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        diagnostic_code: str | None = None,
+    ) -> None:
+        if (
+            diagnostic_code is not None
+            and diagnostic_code not in NETWORK_DIAGNOSTIC_CODES
+        ):
+            raise ValueError("Unsupported provider diagnostic code")
+        if diagnostic_code is not None and code != "LLM_NETWORK_ERROR":
+            raise ValueError("Provider diagnostic code requires LLM_NETWORK_ERROR")
         super().__init__(message)
         self.code = code
-        self.retryable = retryable
+        self.retryable = retryable and (
+            diagnostic_code not in NON_RETRYABLE_NETWORK_DIAGNOSTICS
+        )
+        self._diagnostic_code = diagnostic_code
+
+    @property
+    def diagnostic_code(self) -> str | None:
+        return self._diagnostic_code
 
 
 class IntentProvider(Protocol):
@@ -45,6 +86,71 @@ def _endpoint_url(api_base: str) -> str:
 
 def _exact_hostname(url: str) -> str:
     return (urlsplit(url).hostname or "").rstrip(".").lower()
+
+
+def _exception_chain(error: BaseException) -> Iterator[BaseException]:
+    """Walk explicit and implicit causes without inspecting exception messages."""
+
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        yield current
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+
+
+def _is_loopback_hostname(hostname: str) -> bool:
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _network_diagnostic_code(error: httpx.RequestError, hostname: str) -> str:
+    """Classify transport failures using types and certificate verify codes only."""
+
+    chain = tuple(_exception_chain(error))
+    if any(isinstance(item, httpx.ProxyError) for item in chain):
+        return "PROXY"
+
+    certificate_errors = tuple(
+        item for item in chain if isinstance(item, ssl.SSLCertVerificationError)
+    )
+    if certificate_errors:
+        if any(
+            getattr(item, "verify_code", None) in _HOSTNAME_MISMATCH_VERIFY_CODES
+            for item in certificate_errors
+        ):
+            return "TLS_HOSTNAME"
+        return "TLS_CERTIFICATE"
+
+    if any(isinstance(item, ssl.SSLError) for item in chain):
+        return "TLS_HANDSHAKE"
+    if any(isinstance(item, httpx.ProtocolError) for item in chain):
+        return "PROTOCOL"
+    if any(isinstance(item, socket.gaierror) for item in chain):
+        return "DNS"
+
+    connection_failure = any(
+        isinstance(item, (httpx.ConnectError, ConnectionError)) for item in chain
+    )
+    connection_refused = any(
+        isinstance(item, ConnectionRefusedError) for item in chain
+    )
+    if connection_refused and _is_loopback_hostname(hostname):
+        return "LOCAL_ENDPOINT"
+    if connection_failure:
+        return "CONNECT"
+    return "NETWORK"
 
 
 def _uses_completion_token_limit(model: str) -> bool:
@@ -276,6 +382,7 @@ class OpenAICompatibleProvider:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "Accept-Encoding": "identity",
             "Authorization": f"Bearer {self._api_key}",
         }
         if self._hostname == "generativelanguage.googleapis.com":
@@ -283,20 +390,26 @@ class OpenAICompatibleProvider:
         try:
             response = await self._post_bounded(headers, body)
         except httpx.TimeoutException as exc:
-            logger.warning("llm_request_failed code=timeout model=%s", self._model)
+            logger.warning("llm_request_failed code=timeout")
             raise ProviderFailure("LLM_TIMEOUT", "LLM request timed out", retryable=True) from exc
         except httpx.RequestError as exc:
-            logger.warning("llm_request_failed code=network model=%s", self._model)
+            diagnostic_code = _network_diagnostic_code(exc, self._hostname)
+            logger.warning(
+                "llm_request_failed code=network diagnostic=%s",
+                diagnostic_code,
+            )
             raise ProviderFailure(
-                "LLM_NETWORK_ERROR", "LLM network request failed", retryable=True
+                "LLM_NETWORK_ERROR",
+                "LLM network request failed",
+                retryable=diagnostic_code not in NON_RETRYABLE_NETWORK_DIAGNOSTICS,
+                diagnostic_code=diagnostic_code,
             ) from exc
         if response.status_code >= 400:
             failure = _safe_http_failure(response.status_code)
             logger.warning(
-                "llm_request_failed code=%s status=%d model=%s",
+                "llm_request_failed code=%s status=%d",
                 failure.code,
                 response.status_code,
-                self._model,
             )
             raise failure
         try:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,8 +57,10 @@ def test_noninteractive_configuration_requires_exactly_three_inputs(
         cli._collect_configuration(arguments)
 
 
-def test_onboard_validates_llm_inside_new_runtime_before_saving(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_onboard_commits_runtime_before_validating_llm_and_saving(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     order: list[str] = []
     environment = {
@@ -65,8 +68,13 @@ def test_onboard_validates_llm_inside_new_runtime_before_saving(
         "LLM_MODEL": "model-id",
         "LLM_API_KEY": "test-key",
     }
-    runtime = object()
-    monkeypatch.setattr(cli, "_collect_configuration", lambda _arguments: environment)
+    runtime_python = tmp_path / "var" / "runtime" / "python"
+    runtime = SimpleNamespace(interpreter={"path": str(runtime_python)})
+    def fake_collect(_arguments):
+        order.append("collect")
+        return environment
+
+    monkeypatch.setattr(cli, "_collect_configuration", fake_collect)
 
     def fake_test(_layout, selected, *, runtime_python=None, **_kwargs):
         assert selected == environment
@@ -79,10 +87,8 @@ def test_onboard_validates_llm_inside_new_runtime_before_saving(
         lambda _path, selected: order.append(f"save:{selected['LLM_MODEL']}"),
     )
 
-    def fake_setup(_layout, options):
-        order.append("install")
-        assert options.after_runtime is not None
-        options.after_runtime(tmp_path / "var" / "runtime" / "python")
+    def fake_setup(_layout):
+        order.append("setup")
         return runtime
 
     monkeypatch.setattr(cli, "setup", fake_setup)
@@ -99,10 +105,121 @@ def test_onboard_validates_llm_inside_new_runtime_before_saving(
 
     assert cli._onboard(RuntimeLayout(tmp_path), arguments) is runtime
     assert order == [
-        "install",
-        f"test:{tmp_path / 'var' / 'runtime' / 'python'}",
+        "collect",
+        "setup",
+        f"test:{runtime_python}",
         "save:model-id",
     ]
+    stages = capsys.readouterr().err
+    assert stages.index("LLM: validating") < stages.index("complete:")
+
+
+def test_failed_onboard_llm_validation_preserves_committed_runtime_and_old_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    layout = RuntimeLayout(tmp_path)
+    runtime_python = layout.runtime_environment / "python"
+    environment = {
+        "LLM_API_BASE": "https://candidate.example/v1",
+        "LLM_MODEL": "candidate-model",
+        "LLM_API_KEY": "candidate-key",
+    }
+    old_configuration = b"LLM_API_BASE=https://old.example/v1\nLLM_MODEL=old\nLLM_API_KEY=old-key\n"
+    layout.llm_config_file.parent.mkdir(parents=True)
+    layout.llm_config_file.write_bytes(old_configuration)
+    monkeypatch.setattr(cli, "_collect_configuration", lambda _arguments: environment)
+
+    def fake_setup(_layout):
+        runtime_python.parent.mkdir(parents=True)
+        runtime_python.write_text("managed", encoding="utf-8")
+        layout.profile_file.parent.mkdir(parents=True, exist_ok=True)
+        layout.profile_file.write_text("committed", encoding="utf-8")
+        model = layout.model_root / "preserved-model.bin"
+        model.parent.mkdir(parents=True, exist_ok=True)
+        model.write_text("preserved", encoding="utf-8")
+        return SimpleNamespace(interpreter={"path": str(runtime_python)})
+
+    monkeypatch.setattr(cli, "setup", fake_setup)
+    monkeypatch.setattr(
+        cli,
+        "test_llm_configuration",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("大模型连接检查失败（CONNECT）：固定诊断。")
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "write_private_environment",
+        lambda *_args: pytest.fail("failed candidate must not be saved"),
+    )
+    arguments = build_parser().parse_args(
+        [
+            "onboard",
+            "--api-base",
+            "https://candidate.example/v1",
+            "--model",
+            "candidate-model",
+            "--api-key-stdin",
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="CONNECT") as captured:
+        cli._onboard(layout, arguments)
+
+    assert runtime_python.read_text(encoding="utf-8") == "managed"
+    assert layout.profile_file.read_text(encoding="utf-8") == "committed"
+    assert (layout.model_root / "preserved-model.bin").is_file()
+    assert layout.llm_config_file.read_bytes() == old_configuration
+    message = str(captured.value)
+    assert message.splitlines()[0].startswith("大模型连接检查失败（CONNECT）")
+    assert "本地 CPU 环境和模型已完成并保留。" in message
+    assert "候选 LLM 配置未保存。" in message
+    assert "python scripts/socialgraph.py configure-llm" in message
+    assert "candidate-key" not in message
+    assert "candidate.example" not in message
+
+
+def test_configure_llm_never_runs_setup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment = {
+        "LLM_API_BASE": "https://provider.example/v1",
+        "LLM_MODEL": "model-id",
+        "LLM_API_KEY": "test-key",
+    }
+    saved: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        RuntimeLayout,
+        "discover",
+        lambda _explicit=None: RuntimeLayout(tmp_path),
+    )
+    monkeypatch.setattr(cli, "_collect_configuration", lambda _arguments: environment)
+    monkeypatch.setattr(
+        cli,
+        "_save_verified_configuration",
+        lambda _layout, selected: saved.append(selected),
+    )
+    monkeypatch.setattr(
+        cli,
+        "setup",
+        lambda *_args, **_kwargs: pytest.fail("configure-llm must not run setup"),
+    )
+    arguments = build_parser().parse_args(
+        [
+            "--project-root",
+            str(tmp_path),
+            "configure-llm",
+            "--api-base",
+            "https://provider.example/v1",
+            "--model",
+            "model-id",
+            "--api-key-stdin",
+        ]
+    )
+
+    assert cli.run(arguments) == 0
+    assert saved == [environment]
 
 
 def test_failed_llm_validation_never_writes_configuration(
